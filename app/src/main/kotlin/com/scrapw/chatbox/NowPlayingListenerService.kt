@@ -9,92 +9,115 @@ import android.util.Log
 
 class NowPlayingListenerService : NotificationListenerService() {
 
-    private var msm: MediaSessionManager? = null
-    private var activeController: MediaController? = null
+    private val tag = "NowPlayingListener"
 
-    private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-        // controllers can be null and/or mutable; normalize it to List<MediaController>
-        pickBestController(controllers?.toList().orEmpty())
+    private val msm: MediaSessionManager by lazy {
+        getSystemService(MediaSessionManager::class.java)
     }
+
+    private var active: MediaController? = null
 
     private val controllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
-            pushCurrent()
+            publish(active)
         }
 
         override fun onMetadataChanged(metadata: MediaMetadata?) {
-            pushCurrent()
+            publish(active)
         }
     }
 
+    private val sessionsListener =
+        MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+            val list = controllers ?: emptyList()
+            // Prefer the one that's playing
+            val playing = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+            setActiveController(playing ?: list.firstOrNull())
+        }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
-        try {
-            msm = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-            msm?.addOnActiveSessionsChangedListener(sessionsListener, null)
+        Log.d(tag, "onListenerConnected()")
 
-            val controllers = msm?.getActiveSessions(null)?.toList().orEmpty()
-            pickBestController(controllers)
-            pushCurrent()
+        try {
+            // In a NotificationListenerService, passing null is valid and commonly used.
+            msm.addOnActiveSessionsChangedListener(sessionsListener, null)
+
+            val initial = msm.getActiveSessions(null) ?: emptyList()
+            val playing = initial.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+            setActiveController(playing ?: initial.firstOrNull())
         } catch (t: Throwable) {
-            Log.e("NowPlayingListener", "Failed to connect", t)
+            Log.e(tag, "Failed to connect sessions listener", t)
+            NowPlayingState.clear()
         }
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        Log.d(tag, "onListenerDisconnected()")
+
         try {
-            msm?.removeOnActiveSessionsChangedListener(sessionsListener)
+            msm.removeOnActiveSessionsChangedListener(sessionsListener)
         } catch (_: Throwable) {}
-        detachController()
+
+        setActiveController(null)
         NowPlayingState.clear()
     }
 
-    private fun pickBestController(controllers: List<MediaController>) {
-        val best =
-            controllers.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-                ?: controllers.firstOrNull()
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(tag, "onDestroy()")
 
-        if (best?.sessionToken == activeController?.sessionToken) return
-
-        detachController()
-        activeController = best
         try {
-            activeController?.registerCallback(controllerCallback)
+            msm.removeOnActiveSessionsChangedListener(sessionsListener)
         } catch (_: Throwable) {}
-        pushCurrent()
+
+        setActiveController(null)
     }
 
-    private fun detachController() {
+    private fun setActiveController(controller: MediaController?) {
+        if (active == controller) {
+            publish(active)
+            return
+        }
+
         try {
-            activeController?.unregisterCallback(controllerCallback)
+            active?.unregisterCallback(controllerCallback)
         } catch (_: Throwable) {}
-        activeController = null
+
+        active = controller
+
+        try {
+            active?.registerCallback(controllerCallback)
+        } catch (_: Throwable) {}
+
+        publish(active)
     }
 
-    private fun pushCurrent() {
-        val c = activeController ?: run {
+    private fun publish(controller: MediaController?) {
+        if (controller == null) {
             NowPlayingState.clear()
             return
         }
 
-        val md = c.metadata
-        val st = c.playbackState
+        val md = controller.metadata
+        val st = controller.playbackState
 
         val title = md?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
         val artist = md?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
-        val duration = md?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 1L
 
-        val pos = st?.position ?: 0L
+        val duration = (md?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 1L).coerceAtLeast(1L)
+
         val isPlaying = st?.state == PlaybackState.STATE_PLAYING
+        val position = (st?.position ?: 0L).coerceIn(0L, duration)
 
         NowPlayingState.update(
-            NowPlaying(
-                isPlaying = isPlaying,
-                artist = artist,
+            NowPlayingSnapshot(
                 title = title,
-                positionMs = pos.coerceAtLeast(0L),
-                durationMs = duration.coerceAtLeast(1L)
+                artist = artist,
+                isPlaying = isPlaying,
+                positionMs = position,
+                durationMs = duration
             )
         )
     }
