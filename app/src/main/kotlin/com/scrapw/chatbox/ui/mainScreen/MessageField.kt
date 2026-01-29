@@ -31,9 +31,7 @@ fun MessageField(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
 
-        // ============================
         // Cycle controls
-        // ============================
         ElevatedCard {
             Column(
                 Modifier.padding(12.dp),
@@ -99,32 +97,20 @@ fun MessageField(
                             Text("Stop Cycle")
                         }
                     }
-
-                    Text(
-                        "Cycle sends:\n• your cycle line\n• Now Playing block underneath (if enabled)",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    Text(
-                        "Enable cycle to send messages repeatedly.\nNow Playing output sends under cycle when enabled.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                 }
             }
         }
 
-        // ============================
         // Now Playing controls
-        // ============================
         ElevatedCard {
             Column(
                 Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Now Playing (no Spotify login)", style = MaterialTheme.typography.titleMedium)
+                Text("Now Playing", style = MaterialTheme.typography.titleMedium)
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enable Now Playing block (VRChat)")
+                    Text("Enable Now Playing block")
                     Spacer(Modifier.weight(1f))
                     Switch(
                         checked = chatboxViewModel.spotifyEnabled,
@@ -175,7 +161,7 @@ fun MessageField(
 
                 if (debugExpanded) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Demo mode (shows without music)")
+                        Text("Demo mode")
                         Spacer(Modifier.weight(1f))
                         Switch(
                             checked = chatboxViewModel.spotifyDemoEnabled,
@@ -185,15 +171,13 @@ fun MessageField(
                 }
 
                 Text(
-                    "No {spotify} tag. This block is always automatic and separate under cycle.",
+                    "This block is automatic and always appears under your cycle message.",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
 
-        // ============================
-        // Manual message input + quick + send
-        // ============================
+        // Manual input + buttons
         ElevatedCard {
             Row(
                 modifier = Modifier
@@ -222,3 +206,4 @@ fun MessageField(
         }
     }
 }
+
