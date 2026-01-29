@@ -6,9 +6,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -103,7 +103,7 @@ fun MessageField(
                                 }
                             } else {
                                 Text(
-                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) is sent separately.",
+                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) is always placed under it automatically.",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -119,7 +119,7 @@ fun MessageField(
                                 Spacer(Modifier.weight(1f))
                                 Switch(
                                     checked = chatboxViewModel.spotifyEnabled,
-                                    onCheckedChange = { chatboxViewModel.spotifyEnabled = it }
+                                    onCheckedChange = { chatboxViewModel.setSpotifyEnabledFlag(it) }
                                 )
                             }
 
@@ -141,7 +141,7 @@ fun MessageField(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
-                                placeholder = { Text("Music refresh: seconds between updates") }
+                                placeholder = { Text("Music refresh: seconds between progress updates") }
                             )
 
                             Row(
@@ -160,10 +160,27 @@ fun MessageField(
                                         else ButtonDefaults.outlinedButtonColors()
 
                                     Button(
-                                        onClick = { chatboxViewModel.spotifyPreset = p },
+                                        onClick = { chatboxViewModel.updateSpotifyPreset(p) },
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                         colors = colors
                                     ) { Text("$p") }
+                                }
+                            }
+
+                            var demoExpanded by remember { mutableStateOf(false) }
+                            OutlinedButton(
+                                onClick = { demoExpanded = !demoExpanded },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(if (demoExpanded) "Hide Demo" else "Show Demo") }
+
+                            if (demoExpanded) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Demo mode (no real music needed)")
+                                    Spacer(Modifier.weight(1f))
+                                    Switch(
+                                        checked = chatboxViewModel.spotifyDemoEnabled,
+                                        onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
+                                    )
                                 }
                             }
 
@@ -198,7 +215,7 @@ fun MessageField(
                             }
 
                             Text(
-                                "For detection:\n• Enable Notification Access for Chatbox\n• Play music that shows a media notification\n• Re-open Chatbox after enabling access",
+                                "For real detection: enable Notification Access, then play music in an app that shows a media notification.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -208,15 +225,20 @@ fun MessageField(
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
 
-                            Text("Listener connected: ${chatboxViewModel.nowPlayingListenerConnected}")
-                            Text("Active package: ${chatboxViewModel.nowPlayingActivePackage.ifBlank { "(none)" }}")
+                            Text("Listener connected: ${chatboxViewModel.listenerConnected}")
+                            Text("Active package: ${chatboxViewModel.activePackage}")
+
+                            Divider()
 
                             Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
-                            Text("Artist: ${chatboxViewModel.lastNowPlayingArtist.ifBlank { "(blank)" }}")
-                            Text("Title: ${chatboxViewModel.lastNowPlayingTitle.ifBlank { "(blank)" }}")
+                            Text("Artist: ${chatboxViewModel.lastNowPlayingArtist}")
+                            Text("Title: ${chatboxViewModel.lastNowPlayingTitle}")
+
+                            val lastSent = chatboxViewModel.lastSentToVrchatAtMs
+                            Text("Last sent: ${if (lastSent == 0L) "never" else lastSent}")
 
                             Text(
-                                "If detected=false:\n• Android Settings → Notification Access → enable Chatbox\n• Toggle OFF/ON\n• Force stop Chatbox, re-open\n• Ensure your player shows a media notification",
+                                "If detected=false:\n• Notification Access ON for Chatbox\n• Open Spotify and start playing\n• Make sure Spotify shows a media notification\n• Try toggling access OFF then ON\n• Restart Chatbox after enabling access",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -254,4 +276,3 @@ fun MessageField(
         }
     }
 }
-
