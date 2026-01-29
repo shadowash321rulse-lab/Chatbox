@@ -7,7 +7,6 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -32,17 +31,10 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval")
 
-        // Spotify prefs + tokens
+        // Now Playing (we keep names as "spotify_*" so your UI/ViewModel stays simple)
         val SPOTIFY_ENABLED = booleanPreferencesKey("spotify_enabled")
         val SPOTIFY_DEMO = booleanPreferencesKey("spotify_demo")
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
-        val SPOTIFY_CLIENT_ID = stringPreferencesKey("spotify_client_id")
-
-        val SPOTIFY_ACCESS_TOKEN = stringPreferencesKey("spotify_access_token")
-        val SPOTIFY_REFRESH_TOKEN = stringPreferencesKey("spotify_refresh_token")
-        val SPOTIFY_EXPIRES_AT = longPreferencesKey("spotify_expires_at_epoch_sec")
-        val SPOTIFY_CODE_VERIFIER = stringPreferencesKey("spotify_code_verifier")
-        val SPOTIFY_STATE = stringPreferencesKey("spotify_state")
     }
 
     val ipAddress = get(IP_ADDRESS, "127.0.0.1")
@@ -73,7 +65,7 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val cycleInterval = get(CYCLE_INTERVAL, 3)
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
-    // Spotify
+    // Now Playing prefs
     val spotifyEnabled = get(SPOTIFY_ENABLED, false)
     suspend fun saveSpotifyEnabled(value: Boolean) = save(SPOTIFY_ENABLED, value)
 
@@ -82,35 +74,6 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
 
     val spotifyPreset = get(SPOTIFY_PRESET, 1)
     suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
-
-    val spotifyClientId = get(SPOTIFY_CLIENT_ID, "")
-    suspend fun saveSpotifyClientId(value: String) = save(SPOTIFY_CLIENT_ID, value)
-
-    // Tokens
-    val spotifyAccessToken = get(SPOTIFY_ACCESS_TOKEN, "")
-    suspend fun saveSpotifyAccessToken(value: String) = save(SPOTIFY_ACCESS_TOKEN, value)
-
-    val spotifyRefreshToken = get(SPOTIFY_REFRESH_TOKEN, "")
-    suspend fun saveSpotifyRefreshToken(value: String) = save(SPOTIFY_REFRESH_TOKEN, value)
-
-    val spotifyExpiresAtEpochSec = get(SPOTIFY_EXPIRES_AT, 0L)
-    suspend fun saveSpotifyExpiresAtEpochSec(value: Long) = save(SPOTIFY_EXPIRES_AT, value)
-
-    val spotifyCodeVerifier = get(SPOTIFY_CODE_VERIFIER, "")
-    suspend fun saveSpotifyCodeVerifier(value: String) = save(SPOTIFY_CODE_VERIFIER, value)
-
-    val spotifyState = get(SPOTIFY_STATE, "")
-    suspend fun saveSpotifyState(value: String) = save(SPOTIFY_STATE, value)
-
-    suspend fun clearSpotifyTokens() {
-        dataStore.edit { prefs ->
-            prefs.remove(SPOTIFY_ACCESS_TOKEN)
-            prefs.remove(SPOTIFY_REFRESH_TOKEN)
-            prefs.remove(SPOTIFY_EXPIRES_AT)
-            prefs.remove(SPOTIFY_CODE_VERIFIER)
-            prefs.remove(SPOTIFY_STATE)
-        }
-    }
 
     private fun <T> get(key: Preferences.Key<T>, defaultValue: T): Flow<T> {
         return dataStore.data
