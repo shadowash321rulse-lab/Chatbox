@@ -6,9 +6,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +33,7 @@ fun MessageField(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+
         ElevatedCard {
             Column(Modifier.fillMaxWidth()) {
                 TabRow(selectedTabIndex = tab.ordinal) {
@@ -43,7 +44,10 @@ fun MessageField(
 
                 when (tab) {
                     TabPage.Cycle -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Enable Cycle", style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.weight(1f))
@@ -54,6 +58,26 @@ fun MessageField(
                                         if (!it) chatboxViewModel.stopAll()
                                     }
                                 )
+                            }
+
+                            // NEW: AFK toggle button (chip)
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text("Status", style = MaterialTheme.typography.labelLarge)
+                                FilterChip(
+                                    selected = chatboxViewModel.afkEnabled,
+                                    onClick = { chatboxViewModel.afkEnabled = !chatboxViewModel.afkEnabled },
+                                    label = { Text("AFK") }
+                                )
+                                Spacer(Modifier.weight(1f))
+                                if (chatboxViewModel.afkEnabled) {
+                                    Text("Enabled", style = MaterialTheme.typography.bodySmall)
+                                } else {
+                                    Text("Off", style = MaterialTheme.typography.bodySmall)
+                                }
                             }
 
                             if (chatboxViewModel.cycleEnabled) {
@@ -69,9 +93,7 @@ fun MessageField(
                                 TextField(
                                     value = chatboxViewModel.cycleIntervalSeconds.toString(),
                                     onValueChange = { raw ->
-                                        raw.toIntOrNull()?.let { n ->
-                                            chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1)
-                                        }
+                                        raw.toIntOrNull()?.let { n -> chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1) }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
@@ -103,7 +125,7 @@ fun MessageField(
                                 }
                             } else {
                                 Text(
-                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) is always placed under it automatically.",
+                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) will be placed under it automatically.",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -111,7 +133,10 @@ fun MessageField(
                     }
 
                     TabPage.NowPlaying -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Text("Now Playing block (phone music)", style = MaterialTheme.typography.titleMedium)
 
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -135,9 +160,7 @@ fun MessageField(
                             TextField(
                                 value = chatboxViewModel.musicRefreshSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n ->
-                                        chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1)
-                                    }
+                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1) }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
@@ -145,9 +168,7 @@ fun MessageField(
                             )
 
                             Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -215,30 +236,32 @@ fun MessageField(
                             }
 
                             Text(
-                                "For real detection: enable Notification Access, then play music in an app that shows a media notification.",
+                                "When music is paused, the block will show “⏸ paused”.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
                     }
 
                     TabPage.Debug -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
 
                             Text("Listener connected: ${chatboxViewModel.listenerConnected}")
                             Text("Active package: ${chatboxViewModel.activePackage}")
-
-                            Divider()
-
                             Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
+                            Text("Is playing: ${chatboxViewModel.nowPlayingIsPlaying}")
+
                             Text("Artist: ${chatboxViewModel.lastNowPlayingArtist}")
                             Text("Title: ${chatboxViewModel.lastNowPlayingTitle}")
 
                             val lastSent = chatboxViewModel.lastSentToVrchatAtMs
-                            Text("Last sent: ${if (lastSent == 0L) "never" else lastSent}")
+                            Text("Last sent: ${if (lastSent == 0L) "never" else "$lastSent"}")
 
                             Text(
-                                "If detected=false:\n• Notification Access ON for Chatbox\n• Open Spotify and start playing\n• Make sure Spotify shows a media notification\n• Try toggling access OFF then ON\n• Restart Chatbox after enabling access",
+                                "If detected=false:\n• Enable Notification Access for Chatbox\n• Restart Chatbox\n• Toggle access OFF then ON\n• Music app must show a media notification",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -276,3 +299,4 @@ fun MessageField(
         }
     }
 }
+
