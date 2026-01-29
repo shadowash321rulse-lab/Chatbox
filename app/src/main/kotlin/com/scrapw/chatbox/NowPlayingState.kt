@@ -1,4 +1,4 @@
-package com.scrapw.chatbox.nowplaying
+package com.scrapw.chatbox
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,4 +23,3 @@ object NowPlayingState {
         _state.value = NowPlaying()
     }
 }
-
