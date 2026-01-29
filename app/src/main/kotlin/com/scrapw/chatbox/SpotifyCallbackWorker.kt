@@ -1,21 +1,19 @@
-package com.scrapw.chatbox.spotify
+package com.scrapw.chatbox
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import androidx.core.content.ContextCompat
-import com.scrapw.chatbox.ChatboxApplication
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
 
-object SpotifyCallbackWorker {
-    fun start(context: Context, uriString: String) {
-        // lightweight “fire and forget”
-        CoroutineScope(Dispatchers.IO).launch {
-            val repo = (context.applicationContext as ChatboxApplication).userPreferencesRepository
-            SpotifyAuth.handleRedirect(context, repo, Uri.parse(uriString))
-        }
+/**
+ * Compatibility worker left in place so builds don't break.
+ * OAuth callback is handled by SpotifyCallbackActivity + SpotifyTokenExchange.
+ */
+class SpotifyCallbackWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        return Result.success()
     }
 }
-
