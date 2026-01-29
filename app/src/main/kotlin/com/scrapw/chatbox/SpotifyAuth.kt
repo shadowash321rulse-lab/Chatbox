@@ -1,122 +1,99 @@
 package com.scrapw.chatbox
 
+import android.app.Activity
 import android.net.Uri
-import android.util.Base64
+import androidx.browser.customtabs.CustomTabsIntent
 import com.scrapw.chatbox.data.UserPreferencesRepository
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.time.Instant
+import java.util.Base64
+import kotlin.math.max
 
-/**
- * NOTE:
- * Your current Spotify implementation is handled by:
- * - ChatboxViewModel (auth URL generation + refresh + now-playing)
- * - spotify/SpotifyTokenExchange.kt (callback code exchange)
- *
- * This file is kept only so the project compiles if it exists in your repo.
- */
-object SpotifyAuth {
-    const val REDIRECT_URI = "chatbox://spotify-callback"
-    private const val AUTH_URL = "https://accounts.spotify.com/authorize"
-    private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
+class SpotifyAuth(
+    private val repo: UserPreferencesRepository
+) {
+    private val http = OkHttpClient()
 
-    private val scopes = listOf(
-        "user-read-currently-playing",
-        "user-read-playback-state"
-    )
+    private val redirectUri = "chatbox://spotify-callback"
+    private val scopes = "user-read-playback-state user-read-currently-playing"
 
-    suspend fun buildAuthUrl(repo: UserPreferencesRepository): String = withContext(Dispatchers.IO) {
-        val clientId = repo.spotifyClientId.first()
-        require(clientId.isNotBlank()) { "Spotify Client ID is empty" }
-
-        val state = randomUrlSafe(16)
+    fun beginLogin(activity: Activity, clientId: String) {
         val verifier = randomUrlSafe(64)
-        val challenge = codeChallengeS256(verifier)
+        val challenge = sha256Base64Url(verifier)
+        val state = randomUrlSafe(24)
 
-        repo.saveSpotifyState(state)
-        repo.saveSpotifyCodeVerifier(verifier)
-
-        val scopeStr = scopes.joinToString(" ")
-        AUTH_URL +
-            "?client_id=" + enc(clientId) +
-            "&response_type=code" +
-            "&redirect_uri=" + enc(REDIRECT_URI) +
-            "&code_challenge_method=S256" +
-            "&code_challenge=" + enc(challenge) +
-            "&state=" + enc(state) +
-            "&scope=" + enc(scopeStr)
-    }
-
-    suspend fun handleRedirect(repo: UserPreferencesRepository, uri: Uri) = withContext(Dispatchers.IO) {
-        val code = uri.getQueryParameter("code") ?: error("Missing code")
-        val returnedState = uri.getQueryParameter("state") ?: error("Missing state")
-
-        val expectedState = repo.spotifyState.first()
-        if (expectedState.isNotBlank() && expectedState != returnedState) error("State mismatch")
-
-        val clientId = repo.spotifyClientId.first()
-        val verifier = repo.spotifyCodeVerifier.first()
-        require(clientId.isNotBlank()) { "Spotify Client ID is empty" }
-        require(verifier.isNotBlank()) { "Missing PKCE code_verifier" }
-
-        val body = form(
-            "client_id" to clientId,
-            "grant_type" to "authorization_code",
-            "code" to code,
-            "redirect_uri" to REDIRECT_URI,
-            "code_verifier" to verifier
-        )
-
-        val json = postForm(TOKEN_URL, body)
-        val accessToken = json.getString("access_token")
-        val refreshToken = json.optString("refresh_token", "")
-        val expiresIn = json.getLong("expires_in")
-
-        val expiresAt = Instant.now().epochSecond + expiresIn - 15
-        repo.saveSpotifyAccessToken(accessToken)
-        if (refreshToken.isNotBlank()) repo.saveSpotifyRefreshToken(refreshToken)
-        repo.saveSpotifyExpiresAtEpochSec(expiresAt)
-
-        repo.saveSpotifyCodeVerifier("")
-        repo.saveSpotifyState("")
-    }
-
-    private fun postForm(urlStr: String, body: String): JSONObject {
-        val url = URL(urlStr)
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        kotlinx.coroutines.runBlocking {
+            repo.saveSpotifyCodeVerifier(verifier)
+            repo.saveSpotifyState(state)
         }
-        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream.bufferedReader().use { it.readText() }
-        if (code !in 200..299) error("HTTP $code: $text")
-        return JSONObject(text)
+
+        val url = Uri.Builder()
+            .scheme("https")
+            .authority("accounts.spotify.com")
+            .appendPath("authorize")
+            .appendQueryParameter("response_type", "code")
+            .appendQueryParameter("client_id", clientId)
+            .appendQueryParameter("redirect_uri", redirectUri)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("state", state)
+            .appendQueryParameter("scope", scopes)
+            .build()
+
+        CustomTabsIntent.Builder().build().launchUrl(activity, url)
     }
 
-    private fun form(vararg pairs: Pair<String, String>): String =
-        pairs.joinToString("&") { (k, v) -> "${enc(k)}=${enc(v)}" }
+    suspend fun exchangeCodeForTokens(code: String, state: String, clientId: String) {
+        val expectedState = repo.spotifyState.first().trim()
+        if (expectedState.isBlank() || expectedState != state) return
 
-    private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
+        val verifier = repo.spotifyCodeVerifier.first().trim()
+        if (verifier.isBlank() || clientId.isBlank()) return
 
-    private fun randomUrlSafe(bytes: Int): String {
-        val b = ByteArray(bytes)
-        SecureRandom().nextBytes(b)
-        return Base64.encodeToString(b, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val body = FormBody.Builder()
+            .add("client_id", clientId)
+            .add("grant_type", "authorization_code")
+            .add("code", code)
+            .add("redirect_uri", redirectUri)
+            .add("code_verifier", verifier)
+            .build()
+
+        val req = Request.Builder()
+            .url("https://accounts.spotify.com/api/token")
+            .post(body)
+            .build()
+
+        http.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) return
+            val json = JSONObject(res.body?.string().orEmpty())
+            val access = json.optString("access_token", "")
+            val refresh = json.optString("refresh_token", "")
+            val expiresIn = max(1, json.optInt("expires_in", 3600))
+            val expiresAt = (System.currentTimeMillis() / 1000L) + expiresIn.toLong() - 30L
+
+            repo.saveSpotifyAccessToken(access)
+            if (refresh.isNotBlank()) repo.saveSpotifyRefreshToken(refresh)
+            repo.saveSpotifyExpiresAtEpochSec(expiresAt)
+
+            repo.saveSpotifyCodeVerifier("")
+            repo.saveSpotifyState("")
+        }
     }
 
-    private fun codeChallengeS256(verifier: String): String {
+    private fun randomUrlSafe(len: Int): String {
+        val bytes = ByteArray(len)
+        SecureRandom().nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun sha256Base64Url(input: String): String {
         val md = MessageDigest.getInstance("SHA-256")
-        val digest = md.digest(verifier.toByteArray(Charsets.US_ASCII))
-        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val digest = md.digest(input.toByteArray(Charsets.UTF_8))
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     }
 }
