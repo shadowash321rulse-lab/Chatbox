@@ -210,7 +210,8 @@ class ChatboxViewModel(
     }
 
     fun onTypingIndicatorChanged(isChecked: Boolean) {
-        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(it = isChecked) }
+        // ✅ FIXED: was saveTypingIndicator(it = isChecked)
+        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(isChecked) }
     }
 
     fun onSendImmediatelyChanged(isChecked: Boolean) {
@@ -278,8 +279,7 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Text presets (kept for compatibility; not your Spotify-style presets)
-    // You can remove these later if you want. They won't break anything.
+    // Text presets (kept for compatibility)
     // ============================
     data class TextPreset(val name: String, val intervalSeconds: Int, val messages: String)
 
@@ -323,7 +323,6 @@ class ChatboxViewModel(
     // Spotify (OAuth PKCE + Now Playing + Visual Presets)
     // ============================
 
-    // persisted
     var spotifyEnabled by mutableStateOf(false)
     var spotifyClientId by mutableStateOf("")
     var spotifyPreset by mutableStateOf(1) // 1..5
@@ -331,7 +330,6 @@ class ChatboxViewModel(
     private var spotifyRefreshToken: String = ""
     private var spotifyExpiresAtEpochSec: Long = 0L
 
-    // live
     data class SpotifyNowPlaying(
         val isPlaying: Boolean,
         val artist: String,
@@ -346,10 +344,6 @@ class ChatboxViewModel(
     var spotifyStatus by mutableStateOf<String>("")
         private set
 
-    /**
-     * UI can open this URL in a browser.
-     * After login, Spotify redirects to SPOTIFY_REDIRECT_URI which we'll handle via a callback Activity (manifest step).
-     */
     suspend fun buildSpotifyAuthUrl(): String {
         if (spotifyClientId.isBlank()) throw IllegalStateException("Spotify Client ID is empty")
 
@@ -378,10 +372,6 @@ class ChatboxViewModel(
         return url
     }
 
-    /**
-     * Call this from the OAuth callback Activity once you receive chatbox://spotify-callback?code=...&state=...
-     * This exchanges the code for tokens and persists them.
-     */
     suspend fun handleSpotifyRedirectUri(uriString: String) {
         val uri = Uri.parse(uriString)
         val code = uri.getQueryParameter("code") ?: throw IllegalStateException("Missing code")
@@ -412,7 +402,6 @@ class ChatboxViewModel(
 
         saveSpotifyTokens(access, refresh, expiresAt)
 
-        // clear PKCE temp
         userPreferencesRepository.saveSpotifyCodeVerifier("")
         userPreferencesRepository.saveSpotifyState("")
 
@@ -473,7 +462,6 @@ class ChatboxViewModel(
 
         if (spotifyAccessToken.isNotBlank() && spotifyExpiresAtEpochSec > now) return@withContext spotifyAccessToken
 
-        // try refresh
         if (spotifyRefreshToken.isBlank()) return@withContext spotifyAccessToken
 
         val body = form(
@@ -490,7 +478,7 @@ class ChatboxViewModel(
 
             saveSpotifyTokens(newAccess, spotifyRefreshToken, newExpiresAt)
             newAccess
-        } catch (t: Throwable) {
+        } catch (_: Throwable) {
             spotifyStatus = "Spotify refresh failed"
             ""
         }
@@ -541,45 +529,30 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Output composition (cycle + spotify are separate lines)
+    // Output composition (cycle + spotify separate lines)
     // ============================
-
     private fun buildOutgoingMessage(cycleLine: String): String {
         val cycle = cycleLine.trim()
-
-        // Spotify block is separate from cycle text always
         val spotifyBlock = buildSpotifyBlockOrEmpty()
 
-        // Compose lines
         val lines = mutableListOf<String>()
         if (cycle.isNotEmpty()) lines.add(cycle)
-        if (spotifyBlock.isNotEmpty()) {
-            lines.addAll(spotifyBlock.split("\n"))
-        }
+        if (spotifyBlock.isNotEmpty()) lines.addAll(spotifyBlock.split("\n"))
 
-        // Final clamp to 144 chars total
         val joined = lines.joinToString("\n")
         return if (joined.length <= 144) joined else joined.take(144)
     }
 
-    /**
-     * Returns 2-line spotify block or "".
-     * Line 1: title
-     * Line 2: one-line progress bar + timestamps
-     */
     fun buildSpotifyBlockOrEmpty(): String {
         if (!spotifyEnabled) return ""
         val np = spotifyNowPlaying ?: return ""
 
-        val title = formatTitleLine(np.artist, np.track, maxLen = 144) // we'll re-clamp after adding bar too
+        val title = formatTitleLine(np.artist, np.track, maxLen = 144)
         val progressLine = formatProgressLine(np.progressMs, np.durationMs, preset = spotifyPreset)
 
-        // Make sure the Spotify block itself doesn't blow up the overall 144 budget.
-        // We clamp title more aggressively if needed.
         val combined = "$title\n$progressLine"
         if (combined.length <= 144) return combined
 
-        // Reduce title until it fits with progress line + newline
         val budgetForTitle = (144 - progressLine.length - 1).coerceAtLeast(0)
         val titleClamped = clampTitleToBudget(np.artist, np.track, budgetForTitle)
         return "$titleClamped\n$progressLine"
@@ -587,15 +560,12 @@ class ChatboxViewModel(
 
     private fun clampTitleToBudget(artist: String, track: String, budget: Int): String {
         if (budget <= 0) return ""
-        // Try Artist — Track
         val full = "🎧 $artist — $track"
         if (full.length <= budget) return full
 
-        // Drop artist
         val noArtist = "🎧 $track"
         if (noArtist.length <= budget) return noArtist
 
-        // Truncate track
         val prefix = "🎧 "
         val available = (budget - prefix.length).coerceAtLeast(0)
         val t = ellipsize(track, available)
@@ -603,14 +573,12 @@ class ChatboxViewModel(
     }
 
     private fun formatTitleLine(artist: String, track: String, maxLen: Int): String {
-        // Rule: always try to show artist unless it overflows, then drop artist.
         val full = "🎧 $artist — $track"
         if (full.length <= maxLen) return full
 
         val noArtist = "🎧 $track"
         if (noArtist.length <= maxLen) return noArtist
 
-        // Truncate track (artist already removed)
         val available = (maxLen - "🎧 ".length).coerceAtLeast(0)
         return "🎧 " + ellipsize(track, available)
     }
@@ -623,8 +591,7 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Preset progress line (ONE LINE ALWAYS)
-    // Marker snaps to symbol positions.
+    // Preset progress line (ONE LINE)
     // ============================
     private fun formatProgressLine(progressMs: Long, durationMs: Long, preset: Int): String {
         val dur = durationMs.coerceAtLeast(1L)
@@ -633,11 +600,8 @@ class ChatboxViewModel(
         val leftTime = formatTime(prog)
         val rightTime = formatTime(dur)
 
-        // bar width rules:
-        // - preset 1 hearts uses 10 inner steps
-        // - others use 11 steps total (your cube preset uses 11)
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // hearts: ♡━━◉────────♡ 0:58 / 1:20
+            1 -> {
                 val inner = buildBar(
                     width = 10,
                     progress = prog.toFloat() / dur.toFloat(),
@@ -647,7 +611,7 @@ class ChatboxViewModel(
                 )
                 "♡$inner♡ $leftTime / $rightTime"
             }
-            2 -> { // minimal: ━━◉────────── 0:58/1:20
+            2 -> {
                 val bar = buildBar(
                     width = 12,
                     progress = prog.toFloat() / dur.toFloat(),
@@ -657,7 +621,7 @@ class ChatboxViewModel(
                 )
                 "$bar $leftTime/$rightTime"
             }
-            3 -> { // capsule HUD: ⟡⟡⟡◉⟡⟡⟡⟡⟡ 0:58 / 1:20
+            3 -> {
                 val bar = buildBar(
                     width = 9,
                     progress = prog.toFloat() / dur.toFloat(),
@@ -667,13 +631,11 @@ class ChatboxViewModel(
                 )
                 "$bar $leftTime / $rightTime"
             }
-            4 -> { // waveform: ▁▂▃▄▅●▅▄▃▂▁ 0:58 / 1:20
-                val wave = buildWaveBar(
-                    progress = prog.toFloat() / dur.toFloat()
-                )
+            4 -> {
+                val wave = buildWaveBar(progress = prog.toFloat() / dur.toFloat())
                 "$wave $leftTime / $rightTime"
             }
-            else -> { // 5 cubes A: ▣▣▣◉▢▢▢▢▢▢▢ 0:58 / 1:20
+            else -> {
                 val bar = buildBar(
                     width = 11,
                     progress = prog.toFloat() / dur.toFloat(),
@@ -709,7 +671,6 @@ class ChatboxViewModel(
     }
 
     private fun buildWaveBar(progress: Float): String {
-        // fixed “wave” shape (11 chars), marker snaps among positions
         val wave = listOf("▁", "▂", "▃", "▄", "▅", "▅", "▄", "▃", "▂", "▁", "▁")
         val w = wave.size
         val idx = (progress.coerceIn(0f, 1f) * (w - 1)).roundToInt()
@@ -766,7 +727,6 @@ class ChatboxViewModel(
     // Persistence wiring (existing + spotify)
     // ============================
     init {
-        // load once
         viewModelScope.launch {
             cycleEnabled = userPreferencesRepository.cycleEnabled.first()
             cycleMessages = userPreferencesRepository.cycleMessages.first()
@@ -782,7 +742,6 @@ class ChatboxViewModel(
             customPresets.clear()
             customPresets.addAll(decodePresetsJson(json))
 
-            // spotify load
             spotifyEnabled = userPreferencesRepository.spotifyEnabled.first()
             spotifyClientId = userPreferencesRepository.spotifyClientId.first()
             spotifyPreset = userPreferencesRepository.spotifyPreset.first().coerceIn(1, 5)
@@ -792,7 +751,6 @@ class ChatboxViewModel(
             spotifyExpiresAtEpochSec = userPreferencesRepository.spotifyExpiresAtEpochSec.first()
         }
 
-        // save on change
         viewModelScope.launch { snapshotFlow { cycleEnabled }.collect { userPreferencesRepository.saveCycleEnabled(it) } }
         viewModelScope.launch { snapshotFlow { cycleMessages }.collect { userPreferencesRepository.saveCycleMessages(it) } }
         viewModelScope.launch { snapshotFlow { cycleIntervalSeconds }.collect { userPreferencesRepository.saveCycleInterval(it) } }
@@ -805,7 +763,6 @@ class ChatboxViewModel(
             }
         }
 
-        // spotify persistence
         viewModelScope.launch { snapshotFlow { spotifyEnabled }.collect { userPreferencesRepository.saveSpotifyEnabled(it) } }
         viewModelScope.launch { snapshotFlow { spotifyClientId }.collect { userPreferencesRepository.saveSpotifyClientId(it) } }
         viewModelScope.launch { snapshotFlow { spotifyPreset }.collect { userPreferencesRepository.saveSpotifyPreset(it) } }
@@ -848,4 +805,3 @@ data class MessengerUiState(
     val isTypingIndicator: Boolean = true,
     val isSendImmediately: Boolean = true
 )
-
