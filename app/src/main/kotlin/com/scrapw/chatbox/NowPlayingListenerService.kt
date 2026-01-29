@@ -1,201 +1,100 @@
 package com.scrapw.chatbox
 
-import android.app.Notification
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.util.Log
-import android.widget.RemoteViews
-import androidx.annotation.RequiresApi
-import androidx.media.app.NotificationCompat
-import android.media.session.MediaSession
-import android.media.session.MediaController
+import android.app.Notification
 
-/**
- * Listens to media notifications and pushes a parsed "Now Playing" snapshot into NowPlayingState.
- *
- * IMPORTANT:
- * - This file must NOT contain any Compose UI.
- * - Ensure the service is declared in AndroidManifest with BIND_NOTIFICATION_LISTENER_SERVICE.
- */
 class NowPlayingListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.d(TAG, "Notification listener connected")
-        NowPlayingState.update { it.copy(listenerConnected = true) }
-        // Try to immediately detect anything already posted
-        tryScanActiveNotifications()
+        NowPlayingState.setConnected(true)
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
-        Log.d(TAG, "Notification listener disconnected")
-        NowPlayingState.update {
-            it.copy(
-                listenerConnected = false,
-                activePackage = "(none)",
-                detected = false,
-                title = "",
-                artist = "",
-                durationMs = 0L,
-                positionMs = 0L,
-                isPlaying = false
-            )
-        }
+        NowPlayingState.setConnected(false)
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) {
-        super.onNotificationPosted(sbn)
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn == null) return
 
-        // Only care about notifications that look like media
-        val n = sbn.notification ?: return
-        val isMedia = looksLikeMediaNotification(n)
-        if (!isMedia) return
+        val pkg = sbn.packageName ?: ""
+        val notif = sbn.notification ?: return
+        val extras = notif.extras
 
-        val parsed = parseNowPlaying(sbn.packageName, n)
-        if (parsed != null) {
-            NowPlayingState.update { parsed.copy(listenerConnected = true) }
+        // 1) Best path: MediaSession token -> MediaController (gives progress + duration)
+        val token: MediaSession.Token? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            @Suppress("DEPRECATION")
+            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION)
         } else {
-            // Mark active package anyway so you can debug
-            NowPlayingState.update {
-                it.copy(
-                    listenerConnected = true,
-                    activePackage = sbn.packageName
+            null
+        }
+
+        if (token != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                val controller = MediaController(this, token)
+                val metadata = controller.metadata
+                val pb = controller.playbackState
+
+                val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
+                val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
+                val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+
+                val position = pb?.position ?: 0L
+                val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
+
+                val detected = title.isNotBlank() || artist.isNotBlank()
+
+                NowPlayingState.update(
+                    NowPlayingSnapshot(
+                        listenerConnected = true,
+                        activePackage = pkg,
+                        detected = detected,
+                        title = title,
+                        artist = artist,
+                        durationMs = duration,
+                        positionMs = position,
+                        isPlaying = isPlaying
+                    )
                 )
-            }
-        }
-    }
-
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        super.onNotificationRemoved(sbn)
-
-        // If the active package notification was removed, rescan others
-        val current = NowPlayingState.current()
-        if (current.activePackage == sbn.packageName) {
-            tryScanActiveNotifications()
-        }
-    }
-
-    private fun tryScanActiveNotifications() {
-        val list = activeNotifications ?: return
-        var best: NowPlayingSnapshot? = null
-
-        for (sbn in list) {
-            val n = sbn.notification ?: continue
-            if (!looksLikeMediaNotification(n)) continue
-            val parsed = parseNowPlaying(sbn.packageName, n) ?: continue
-            // Prefer "playing" over paused
-            if (best == null || (parsed.isPlaying && !best!!.isPlaying)) {
-                best = parsed
+                return
+            } catch (_: Throwable) {
+                // Fall through to extras parsing
             }
         }
 
-        if (best != null) {
-            NowPlayingState.update { best!!.copy(listenerConnected = true) }
-        } else {
-            NowPlayingState.update {
-                it.copy(
-                    listenerConnected = true,
-                    activePackage = "(none)",
-                    detected = false,
-                    title = "",
-                    artist = "",
-                    durationMs = 0L,
-                    positionMs = 0L,
-                    isPlaying = false
-                )
-            }
-        }
-    }
+        // 2) Fallback: parse notification text fields (no reliable duration/progress)
+        val titleFallback = (extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()).orEmpty()
+        val textFallback = (extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()).orEmpty()
 
-    private fun looksLikeMediaNotification(n: Notification): Boolean {
-        // Many players set category=TRANSPORT or have a MediaStyle
-        val catOk = n.category == Notification.CATEGORY_TRANSPORT
-        val styleOk = NotificationCompat.MediaStyle::class.java.name == n.extras?.getString("android.template")
-        val hasMediaSession = getMediaSessionToken(n) != null
-        return catOk || styleOk || hasMediaSession
-    }
+        val detectedFallback = titleFallback.isNotBlank() || textFallback.isNotBlank()
 
-    private fun parseNowPlaying(pkg: String, n: Notification): NowPlayingSnapshot? {
-        // First try media session token (best quality)
-        val token = getMediaSessionToken(n)
-        if (token != null) {
-            val snap = parseFromMediaSession(pkg, token)
-            if (snap != null) return snap
-        }
+        // Heuristic: title = song, artist = text if it looks short enough.
+        val title = titleFallback
+        val artist = if (textFallback.length <= 60) textFallback else ""
 
-        // Fallback: read title/text from extras (works for many apps)
-        val extras = n.extras ?: return null
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
-        val sub = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
-
-        // Heuristic split:
-        // Sometimes title=Song, text=Artist ; sometimes opposite. We'll do best effort.
-        val song = title.ifBlank { text }
-        val artist = if (song == title) text else title
-
-        if (song.isBlank() && artist.isBlank() && sub.isBlank()) return null
-
-        return NowPlayingSnapshot(
-            listenerConnected = true,
-            activePackage = pkg,
-            detected = true,
-            title = song.ifBlank { title },
-            artist = artist.ifBlank { sub },
-            durationMs = 0L,
-            positionMs = 0L,
-            isPlaying = true // unknown; assume playing if notification is present
-        )
-    }
-
-    private fun parseFromMediaSession(pkg: String, token: Any): NowPlayingSnapshot? {
-        return try {
-            val controller = when (token) {
-                is MediaSession.Token -> MediaController(this, token)
-                else -> null
-            } ?: return null
-
-            val meta = controller.metadata
-            val state = controller.playbackState
-
-            val title = meta?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
-            val artist = meta?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)?.trim().orEmpty()
-            val dur = meta?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) ?: 0L
-
-            val isPlaying = state?.state == PlaybackState.STATE_PLAYING
-            val pos = state?.position ?: 0L
-
-            if (title.isBlank() && artist.isBlank()) return null
-
+        NowPlayingState.update(
             NowPlayingSnapshot(
                 listenerConnected = true,
                 activePackage = pkg,
-                detected = true,
+                detected = detectedFallback,
                 title = title,
                 artist = artist,
-                durationMs = dur,
-                positionMs = pos,
-                isPlaying = isPlaying
+                durationMs = 0L,
+                positionMs = 0L,
+                isPlaying = true // unknown; assume playing if notification is active
             )
-        } catch (t: Throwable) {
-            Log.w(TAG, "parseFromMediaSession failed: ${t.message}")
-            null
-        }
+        )
     }
 
-    private fun getMediaSessionToken(n: Notification): Any? {
-        return try {
-            // AndroidX media style attaches a token under this key:
-            n.extras?.getParcelable("android.mediaSession")
-        } catch (_: Throwable) {
-            null
-        }
-    }
-
-    companion object {
-        private const val TAG = "NowPlayingListener"
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (sbn == null) return
+        NowPlayingState.clearIfActivePackage(sbn.packageName ?: "")
     }
 }
