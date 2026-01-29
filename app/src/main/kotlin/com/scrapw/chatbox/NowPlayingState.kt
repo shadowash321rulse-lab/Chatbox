@@ -3,23 +3,23 @@ package com.scrapw.chatbox
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-data class NowPlaying(
-    val isPlaying: Boolean = false,
-    val artist: String = "",
+data class NowPlayingSnapshot(
     val title: String = "",
+    val artist: String = "",
+    val isPlaying: Boolean = false,
     val positionMs: Long = 0L,
     val durationMs: Long = 1L
 )
 
 object NowPlayingState {
-    private val _state = MutableStateFlow(NowPlaying())
-    val state: StateFlow<NowPlaying> = _state
+    private val _state = MutableStateFlow(NowPlayingSnapshot())
+    val state: StateFlow<NowPlayingSnapshot> = _state
 
-    fun update(np: NowPlaying) {
-        _state.value = np
+    fun update(value: NowPlayingSnapshot) {
+        _state.value = value
     }
 
     fun clear() {
-        _state.value = NowPlaying()
+        _state.value = NowPlayingSnapshot()
     }
 }
