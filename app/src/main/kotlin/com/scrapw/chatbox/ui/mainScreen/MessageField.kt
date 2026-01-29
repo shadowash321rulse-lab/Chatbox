@@ -14,8 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
-import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
 
 @Composable
 fun MessageField(
@@ -59,7 +57,7 @@ fun MessageField(
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 6,
-                        placeholder = { Text("One message per line. Spotify always appears under cycle automatically.") }
+                        placeholder = { Text("One message per line. Spotify appears under cycle automatically.") }
                     )
 
                     TextField(
@@ -116,7 +114,7 @@ fun MessageField(
                     Spacer(Modifier.weight(1f))
                     Switch(
                         checked = chatboxViewModel.spotifyEnabled,
-                        onCheckedChange = { chatboxViewModel.setSpotifyEnabled(it) }
+                        onCheckedChange = { chatboxViewModel.setSpotifyEnabledFlag(it) }
                     )
                 }
 
@@ -125,7 +123,7 @@ fun MessageField(
                     Spacer(Modifier.weight(1f))
                     Switch(
                         checked = chatboxViewModel.spotifyDemoEnabled,
-                        onCheckedChange = { chatboxViewModel.setSpotifyDemoEnabled(it) }
+                        onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
                     )
                 }
 
@@ -149,7 +147,7 @@ fun MessageField(
                     }
                 }
 
-                Text("This card only proves the VRChat output works. Real Spotify auth comes next.")
+                Text("Turn on cycle + start cycle to send demo Spotify to VRChat.")
             }
         }
 
