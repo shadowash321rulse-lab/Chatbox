@@ -3,7 +3,6 @@ package com.scrapw.chatbox.ui.mainScreen
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
@@ -31,41 +30,20 @@ fun MessageField(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = true)
-        ) {
-            Column(Modifier.fillMaxSize()) {
+        ElevatedCard {
+            Column(Modifier.fillMaxWidth()) {
                 TabRow(selectedTabIndex = tab.ordinal) {
-                    Tab(
-                        selected = tab == TabPage.Cycle,
-                        onClick = { tab = TabPage.Cycle },
-                        text = { Text("Cycle") }
-                    )
-                    Tab(
-                        selected = tab == TabPage.NowPlaying,
-                        onClick = { tab = TabPage.NowPlaying },
-                        text = { Text("Now Playing") }
-                    )
-                    Tab(
-                        selected = tab == TabPage.Debug,
-                        onClick = { tab = TabPage.Debug },
-                        text = { Text("Debug") }
-                    )
+                    Tab(selected = tab == TabPage.Cycle, onClick = { tab = TabPage.Cycle }, text = { Text("Cycle") })
+                    Tab(selected = tab == TabPage.NowPlaying, onClick = { tab = TabPage.NowPlaying }, text = { Text("Now Playing") })
+                    Tab(selected = tab == TabPage.Debug, onClick = { tab = TabPage.Debug }, text = { Text("Debug") })
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    when (tab) {
-                        TabPage.Cycle -> {
+                when (tab) {
+                    TabPage.Cycle -> {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Enable Cycle", style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.weight(1f))
@@ -125,13 +103,15 @@ fun MessageField(
                                 }
                             } else {
                                 Text(
-                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) will be placed under it automatically.",
+                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) is sent separately.",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
                         }
+                    }
 
-                        TabPage.NowPlaying -> {
+                    TabPage.NowPlaying -> {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Now Playing block (phone music)", style = MaterialTheme.typography.titleMedium)
 
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -139,7 +119,7 @@ fun MessageField(
                                 Spacer(Modifier.weight(1f))
                                 Switch(
                                     checked = chatboxViewModel.spotifyEnabled,
-                                    onCheckedChange = { chatboxViewModel.setSpotifyEnabledFlag(it) }
+                                    onCheckedChange = { chatboxViewModel.spotifyEnabled = it }
                                 )
                             }
 
@@ -180,27 +160,10 @@ fun MessageField(
                                         else ButtonDefaults.outlinedButtonColors()
 
                                     Button(
-                                        onClick = { chatboxViewModel.updateSpotifyPreset(p) },
+                                        onClick = { chatboxViewModel.spotifyPreset = p },
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                         colors = colors
                                     ) { Text("$p") }
-                                }
-                            }
-
-                            var demoExpanded by remember { mutableStateOf(false) }
-                            OutlinedButton(
-                                onClick = { demoExpanded = !demoExpanded },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(if (demoExpanded) "Hide Demo" else "Show Demo") }
-
-                            if (demoExpanded) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Demo mode (no real music needed)")
-                                    Spacer(Modifier.weight(1f))
-                                    Switch(
-                                        checked = chatboxViewModel.spotifyDemoEnabled,
-                                        onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
-                                    )
                                 }
                             }
 
@@ -223,47 +186,37 @@ fun MessageField(
                                 ) {
                                     Icon(Icons.Filled.PauseCircleFilled, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Stop")
+                                    Text("Stop Sending")
                                 }
                             }
 
                             OutlinedButton(
                                 onClick = { chatboxViewModel.sendNowPlayingOnce() },
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text("Send once now (test)") }
+                            ) {
+                                Text("Send once now (test)")
+                            }
 
                             Text(
-                                "For real detection: enable Notification Access, then force-close Chatbox and reopen. Spotify must show a media notification.",
+                                "For detection:\n• Enable Notification Access for Chatbox\n• Play music that shows a media notification\n• Re-open Chatbox after enabling access",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
+                    }
 
-                        TabPage.Debug -> {
+                    TabPage.Debug -> {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
 
-                            // THE IMPORTANT NEW LINES:
                             Text("Listener connected: ${chatboxViewModel.nowPlayingListenerConnected}")
                             Text("Active package: ${chatboxViewModel.nowPlayingActivePackage.ifBlank { "(none)" }}")
-
-                            Divider()
 
                             Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
                             Text("Artist: ${chatboxViewModel.lastNowPlayingArtist.ifBlank { "(blank)" }}")
                             Text("Title: ${chatboxViewModel.lastNowPlayingTitle.ifBlank { "(blank)" }}")
 
-                            Divider()
-
-                            val lastSent = chatboxViewModel.lastSentToVrchatAtMs
-                            Text("Last sent: ${if (lastSent == 0L) "never" else lastSent.toString()}")
-
                             Text(
-                                "If Listener connected=false:\n" +
-                                    "• Notification Access is NOT enabled or service isn't running.\n\n" +
-                                    "If connected=true but package != spotify:\n" +
-                                    "• Another app is the active player.\n\n" +
-                                    "If connected=true and package=spotify but title blank:\n" +
-                                    "• Spotify notifications are OFF, or phone blocks listener.\n" +
-                                    "• Disable battery optimization for Chatbox.",
+                                "If detected=false:\n• Android Settings → Notification Access → enable Chatbox\n• Toggle OFF/ON\n• Force stop Chatbox, re-open\n• Ensure your player shows a media notification",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -272,9 +225,8 @@ fun MessageField(
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        // Manual input row (always visible)
+        ElevatedCard {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -302,3 +254,4 @@ fun MessageField(
         }
     }
 }
+
