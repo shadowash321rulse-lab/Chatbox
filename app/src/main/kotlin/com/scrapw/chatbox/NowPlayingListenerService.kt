@@ -29,26 +29,25 @@ class NowPlayingListenerService : NotificationListenerService() {
 
     private val sessionsListener =
         MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-            val list = controllers ?: emptyList()
-            // Prefer the one that's playing
-            val playing = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-            setActiveController(playing ?: list.firstOrNull())
+            val list = controllers?.toList() ?: emptyList()
+            setActiveController(pickBestController(list))
         }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.d(tag, "onListenerConnected()")
+        NowPlayingState.setConnected(true)
 
         try {
-            // In a NotificationListenerService, passing null is valid and commonly used.
+            // In NotificationListenerService context, null is correct.
             msm.addOnActiveSessionsChangedListener(sessionsListener, null)
 
-            val initial = msm.getActiveSessions(null) ?: emptyList()
-            val playing = initial.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-            setActiveController(playing ?: initial.firstOrNull())
+            val initial = msm.getActiveSessions(null)?.toList() ?: emptyList()
+            setActiveController(pickBestController(initial))
         } catch (t: Throwable) {
             Log.e(tag, "Failed to connect sessions listener", t)
-            NowPlayingState.clear()
+            NowPlayingState.setConnected(true) // connected but failed to read sessions
+            NowPlayingState.clearKeepConnected()
         }
     }
 
@@ -61,7 +60,8 @@ class NowPlayingListenerService : NotificationListenerService() {
         } catch (_: Throwable) {}
 
         setActiveController(null)
-        NowPlayingState.clear()
+        NowPlayingState.setConnected(false)
+        NowPlayingState.clearKeepConnected()
     }
 
     override fun onDestroy() {
@@ -73,6 +73,26 @@ class NowPlayingListenerService : NotificationListenerService() {
         } catch (_: Throwable) {}
 
         setActiveController(null)
+        NowPlayingState.setConnected(false)
+        NowPlayingState.clearKeepConnected()
+    }
+
+    private fun pickBestController(list: List<MediaController>): MediaController? {
+        if (list.isEmpty()) return null
+
+        // 1) Prefer actively playing
+        val playing = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+        if (playing != null) return playing
+
+        // 2) Else prefer paused (Spotify often pauses but still has metadata)
+        val paused = list.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PAUSED }
+        if (paused != null) return paused
+
+        // 3) Else any controller that has metadata
+        val hasMeta = list.firstOrNull { it.metadata != null }
+        if (hasMeta != null) return hasMeta
+
+        return list.first()
     }
 
     private fun setActiveController(controller: MediaController?) {
@@ -81,22 +101,18 @@ class NowPlayingListenerService : NotificationListenerService() {
             return
         }
 
-        try {
-            active?.unregisterCallback(controllerCallback)
-        } catch (_: Throwable) {}
+        try { active?.unregisterCallback(controllerCallback) } catch (_: Throwable) {}
 
         active = controller
 
-        try {
-            active?.registerCallback(controllerCallback)
-        } catch (_: Throwable) {}
+        try { active?.registerCallback(controllerCallback) } catch (_: Throwable) {}
 
         publish(active)
     }
 
     private fun publish(controller: MediaController?) {
         if (controller == null) {
-            NowPlayingState.clear()
+            NowPlayingState.clearKeepConnected()
             return
         }
 
@@ -111,13 +127,17 @@ class NowPlayingListenerService : NotificationListenerService() {
         val isPlaying = st?.state == PlaybackState.STATE_PLAYING
         val position = (st?.position ?: 0L).coerceIn(0L, duration)
 
+        val pkg = try { controller.packageName ?: "" } catch (_: Throwable) { "" }
+
         NowPlayingState.update(
             NowPlayingSnapshot(
                 title = title,
                 artist = artist,
                 isPlaying = isPlaying,
                 positionMs = position,
-                durationMs = duration
+                durationMs = duration,
+                listenerConnected = true,
+                activeControllerPackage = pkg
             )
         )
     }
