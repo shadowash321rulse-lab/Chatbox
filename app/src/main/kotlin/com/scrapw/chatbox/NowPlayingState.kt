@@ -11,7 +11,15 @@ data class NowPlayingSnapshot(
     val title: String = "",
     val artist: String = "",
     val durationMs: Long = 0L,
+
+    // Raw position snapshot from PlaybackState
     val positionMs: Long = 0L,
+
+    // For live progress without notification updates:
+    // elapsedRealtime at the moment positionMs was measured
+    val positionUpdateTimeMs: Long = 0L,
+    val playbackSpeed: Float = 1f,
+
     val isPlaying: Boolean = false
 )
 
@@ -36,6 +44,8 @@ object NowPlayingState {
                 artist = "",
                 durationMs = 0L,
                 positionMs = 0L,
+                positionUpdateTimeMs = 0L,
+                playbackSpeed = 1f,
                 isPlaying = false
             )
         }
