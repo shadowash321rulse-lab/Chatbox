@@ -245,7 +245,7 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Now Playing (notification listener feeds NowPlayingState)
+    // Now Playing (NotificationListener feeds NowPlayingState)
     // ============================
     var spotifyEnabled by mutableStateOf(false)
         private set
@@ -265,6 +265,13 @@ class ChatboxViewModel(
         private set
     var lastNowPlayingTitle by mutableStateOf("")
         private set
+
+    // NEW debug signals (THIS is what tells us what's actually wrong)
+    var nowPlayingListenerConnected by mutableStateOf(false)
+        private set
+    var nowPlayingActivePackage by mutableStateOf("")
+        private set
+
     var lastSentToVrchatAtMs by mutableStateOf(0L)
         private set
 
@@ -284,8 +291,8 @@ class ChatboxViewModel(
     }
 
     fun notificationAccessIntent(): Intent {
-        // Opens the system page where user enables Notification Access for the app
-        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     fun startNowPlayingSender(local: Boolean = false) {
@@ -330,9 +337,7 @@ class ChatboxViewModel(
         val sb = StringBuilder()
 
         val cycle = cycleLine?.trim().orEmpty()
-        if (cycle.isNotEmpty()) {
-            sb.append(cycle)
-        }
+        if (cycle.isNotEmpty()) sb.append(cycle)
 
         val np = buildNowPlayingBlock()
         if (np.isNotEmpty()) {
@@ -346,14 +351,13 @@ class ChatboxViewModel(
     private fun buildNowPlayingBlock(): String {
         if (!spotifyEnabled) return ""
 
-        // Demo fallback so you can test UI even if detection fails
         val snapshot = if (spotifyDemoEnabled) {
             NowPlayingState.state.value.copy(
                 title = "pretty song",
                 artist = "soft artist",
                 isPlaying = true,
-                positionMs = (58_000L),
-                durationMs = (80_000L)
+                positionMs = 58_000L,
+                durationMs = 80_000L
             )
         } else {
             NowPlayingState.state.value
@@ -363,19 +367,15 @@ class ChatboxViewModel(
         val artist = snapshot.artist.trim()
         if (title.isEmpty() && artist.isEmpty()) return ""
 
-        // Preset bars (fixed to same width so they don't overflow inconsistently)
         val bar = renderPresetBar(
             preset = spotifyPreset,
             positionMs = snapshot.positionMs,
             durationMs = snapshot.durationMs
         )
-
         val time = "${fmtTime(snapshot.positionMs)} / ${fmtTime(snapshot.durationMs)}"
 
-        // line 1: artist / title (artist can be dropped by your later overflow rules)
-        // line 2: bar + time (ONE LINE)
         val line1 = if (artist.isNotEmpty()) "$artist — $title" else title
-        val line2 = "$bar $time"
+        val line2 = "$bar $time" // one line
 
         return "$line1\n$line2"
     }
@@ -384,8 +384,6 @@ class ChatboxViewModel(
         val dur = durationMs.coerceAtLeast(1L)
         val p = (positionMs.toDouble() / dur.toDouble()).coerceIn(0.0, 1.0)
 
-        // Use a consistent symbol count across all presets to reduce overflow.
-        // Total "slots" includes the moving marker.
         val slots = 11
         val idx = (p * (slots - 1)).roundToInt().coerceIn(0, slots - 1)
 
@@ -400,22 +398,15 @@ class ChatboxViewModel(
         }
 
         return when (preset.coerceIn(1, 5)) {
-            // (love) ♡━━━◉━━━━♡ (shortened to fixed width but same vibe)
             1 -> build(prefix = "♡", fillChar = '━', marker = "◉", suffix = "♡")
-            // (minimal) ━━◉──────────  (fixed width)
             2 -> build(prefix = "", fillChar = '─', marker = "◉", suffix = "")
-            // (crystal) ⟡⟡⟡◉⟡⟡⟡⟡⟡
             3 -> build(prefix = "", fillChar = '⟡', marker = "◉", suffix = "")
-            // (soundwave) ▁▂▃▄▅●▅▄▃▂▁ (fixed pattern with moving marker)
             4 -> {
                 val wave = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁','▁')
                 val sb = StringBuilder()
-                for (i in 0 until slots) {
-                    sb.append(if (i == idx) '●' else wave[i % wave.size])
-                }
+                for (i in 0 until slots) sb.append(if (i == idx) '●' else wave[i % wave.size])
                 sb.toString()
             }
-            // (geometry) ▣▣▣◉▢▢▢▢▢▢▢ (fixed width)
             else -> {
                 val leftCount = 3
                 val sb = StringBuilder()
@@ -436,7 +427,7 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Hook NowPlayingState into debug fields
+    // Hook NowPlayingState into debug fields (and new signals)
     // ============================
     init {
         viewModelScope.launch {
@@ -444,6 +435,9 @@ class ChatboxViewModel(
                 lastNowPlayingArtist = s.artist
                 lastNowPlayingTitle = s.title
                 nowPlayingDetected = s.title.isNotBlank() || s.artist.isNotBlank()
+
+                nowPlayingListenerConnected = s.listenerConnected
+                nowPlayingActivePackage = s.activeControllerPackage
             }
         }
     }
