@@ -1,195 +1,164 @@
 package com.scrapw.chatbox.ui
 
-import android.util.Log
-import androidx.annotation.MainThread
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
-import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.lifecycle.*
 import com.scrapw.chatbox.ChatboxApplication
-import com.scrapw.chatbox.UpdateInfo
-import com.scrapw.chatbox.UpdateStatus
-import com.scrapw.chatbox.checkUpdate
 import com.scrapw.chatbox.data.UserPreferencesRepository
 import com.scrapw.chatbox.osc.ChatboxOSC
 import com.scrapw.chatbox.ui.mainScreen.ConversationUiState
 import com.scrapw.chatbox.ui.mainScreen.Message
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.first
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 
 class ChatboxViewModel(
-    private val userPreferencesRepository: UserPreferencesRepository
+    private val repo: UserPreferencesRepository
 ) : ViewModel() {
 
     companion object {
-        private lateinit var instance: ChatboxViewModel
-
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                val application = (this[APPLICATION_KEY] as ChatboxApplication)
-                instance = ChatboxViewModel(application.userPreferencesRepository)
-                instance
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as ChatboxApplication
+                ChatboxViewModel(app.userPreferencesRepository)
             }
         }
-
-        @MainThread
-        fun getInstance(): ChatboxViewModel = instance
-        fun isInstanceInitialized(): Boolean = ::instance.isInitialized
-    }
-
-    override fun onCleared() {
-        stopCycle()
-        super.onCleared()
     }
 
     val conversationUiState = ConversationUiState()
-
-    private val storedIpState =
-        userPreferencesRepository.ipAddress.stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            ""
-        )
-
-    private val userInputIpState = MutableStateFlow("")
-    var ipAddressLocked by mutableStateOf(false)
-
-    private val ipFlow = merge(storedIpState, userInputIpState)
-
-    val messengerUiState = combine(
-        ipFlow,
-        userPreferencesRepository.isRealtimeMsg,
-        userPreferencesRepository.isTriggerSfx,
-        userPreferencesRepository.isTypingIndicator,
-        userPreferencesRepository.isSendImmediately
-    ) { ip, r, s, t, i ->
-        MessengerUiState(ip, r, s, t, i)
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
-        MessengerUiState()
-    )
-
-    private val remoteChatboxOSC = ChatboxOSC(
-        runBlocking { userPreferencesRepository.ipAddress.first() },
-        9000
-    )
-
-    private val localChatboxOSC = ChatboxOSC("localhost", 9000)
-
     val messageText = mutableStateOf(TextFieldValue(""))
     val isAddressResolvable = mutableStateOf(true)
 
-    fun onIpAddressChange(ip: String) {
-        userInputIpState.value = ip
-    }
+    private val osc = ChatboxOSC(runBlocking { repo.ipAddress.first() }, 9000)
 
-    fun ipAddressApply(address: String) {
-        viewModelScope.launch {
-            remoteChatboxOSC.ipAddress = address
-            isAddressResolvable.value = remoteChatboxOSC.addressResolvable
-            userPreferencesRepository.saveIpAddress(address)
-        }
-    }
-
-    fun portApply(port: Int) {
-        remoteChatboxOSC.port = port
-        viewModelScope.launch { userPreferencesRepository.savePort(port) }
-    }
-
-    fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
-        val osc = if (local) localChatboxOSC else remoteChatboxOSC
-        messageText.value = message
-        if (messengerUiState.value.isRealtimeMsg) {
-            osc.sendRealtimeMessage(message.text)
-        }
-    }
-
-    private fun sendText(text: String, local: Boolean) {
-        val osc = if (local) localChatboxOSC else remoteChatboxOSC
-        osc.sendMessage(
-            text,
-            messengerUiState.value.isSendImmediately,
-            messengerUiState.value.isTriggerSFX
-        )
-        conversationUiState.addMessage(
-            Message(text, false, Instant.now())
-        )
-    }
-
-    fun sendMessage(local: Boolean = false) {
-        sendText(messageText.value.text, local)
-        messageText.value = TextFieldValue("", TextRange.Zero)
-    }
-
-    fun stashMessage(local: Boolean = false) {
-        conversationUiState.addMessage(
-            Message(messageText.value.text, true, Instant.now())
-        )
-        messageText.value = TextFieldValue("", TextRange.Zero)
-    }
-
-    fun onRealtimeMsgChanged(b: Boolean) =
-        viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(b) }
-
-    fun onTriggerSfxChanged(b: Boolean) =
-        viewModelScope.launch { userPreferencesRepository.saveIsTriggerSFX(b) }
-
-    fun onTypingIndicatorChanged(b: Boolean) =
-        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(b) }
-
-    fun onSendImmediatelyChanged(b: Boolean) =
-        viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(b) }
-
-    // ===== Cycle feature =====
+    // ===== persisted states =====
     var cycleEnabled by mutableStateOf(false)
     var cycleMessages by mutableStateOf("")
     var cycleIntervalSeconds by mutableStateOf(3)
+
+    var afkEnabled by mutableStateOf(false)
+    var afkMessage by mutableStateOf("AFK 🌙 back soon")
+
+    var selectedPresetName by mutableStateOf("")
+
+    data class Preset(val name: String, val interval: Int, val messages: String)
+    var presets by mutableStateOf(listOf<Preset>())
+
     private var cycleJob: Job? = null
 
-    fun startCycle(local: Boolean = false) {
-        val msgs = cycleMessages.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        if (!cycleEnabled || msgs.isEmpty()) return
+    init {
+        viewModelScope.launch {
+            cycleEnabled = repo.cycleEnabled.first()
+            cycleMessages = repo.cycleMessages.first()
+            cycleIntervalSeconds = repo.cycleInterval.first()
+            afkEnabled = repo.afkEnabled.first()
+            afkMessage = repo.afkMessage.first()
+            selectedPresetName = repo.selectedPreset.first()
+
+            presets = loadPresets(repo.presetsJson.first())
+        }
+    }
+
+    // ===== persistence helpers =====
+    private suspend fun persistAll() {
+        repo.saveCycleEnabled(cycleEnabled)
+        repo.saveCycleMessages(cycleMessages)
+        repo.saveCycleInterval(cycleIntervalSeconds)
+        repo.saveAfkEnabled(afkEnabled)
+        repo.saveAfkMessage(afkMessage)
+        repo.saveSelectedPreset(selectedPresetName)
+        repo.savePresetsJson(savePresets())
+    }
+
+    // ===== cycle =====
+    fun startCycle() {
+        val lines = cycleMessages.lines().filter { it.isNotBlank() }
+        if (!cycleEnabled || lines.isEmpty()) return
 
         cycleJob?.cancel()
         cycleJob = viewModelScope.launch {
             var i = 0
             while (cycleEnabled) {
-                sendText(msgs[i], local)
-                i = (i + 1) % msgs.size
-                delay(cycleIntervalSeconds * 1000L)
+                sendText(lines[i])
+                i = (i + 1) % lines.size
+                delay(cycleIntervalSeconds.coerceAtLeast(1) * 1000L)
             }
         }
+        viewModelScope.launch { persistAll() }
     }
 
     fun stopCycle() {
         cycleJob?.cancel()
         cycleJob = null
+        viewModelScope.launch { persistAll() }
     }
 
-    private var updateChecked = false
-    var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
-    fun checkUpdate() {
-        if (updateChecked) return
-        updateChecked = true
-        viewModelScope.launch {
-            updateInfo = checkUpdate("ScrapW", "Chatbox")
+    // ===== AFK =====
+    fun sendAfkNow() {
+        if (!afkEnabled) return
+        sendText(afkMessage.ifBlank { "AFK" })
+    }
+
+    // ===== presets =====
+    fun applyPreset(p: Preset) {
+        selectedPresetName = p.name
+        cycleMessages = p.messages
+        cycleIntervalSeconds = p.interval
+        cycleEnabled = true
+        viewModelScope.launch { persistAll() }
+    }
+
+    fun savePreset(name: String) {
+        if (name.isBlank()) return
+        presets = presets.filter { it.name != name } +
+                Preset(name, cycleIntervalSeconds, cycleMessages)
+        selectedPresetName = name
+        viewModelScope.launch { persistAll() }
+    }
+
+    fun deletePreset(name: String) {
+        presets = presets.filter { it.name != name }
+        if (selectedPresetName == name) selectedPresetName = ""
+        viewModelScope.launch { persistAll() }
+    }
+
+    // ===== messaging =====
+    fun onMessageTextChange(v: TextFieldValue) {
+        messageText.value = v
+    }
+
+    fun sendMessage() {
+        sendText(messageText.value.text)
+        messageText.value = TextFieldValue("", TextRange.Zero)
+    }
+
+    private fun sendText(text: String) {
+        osc.sendMessage(text, true, true)
+        conversationUiState.addMessage(Message(text, false, Instant.now()))
+    }
+
+    // ===== JSON =====
+    private fun savePresets(): String {
+        val arr = JSONArray()
+        presets.forEach {
+            arr.put(JSONObject().apply {
+                put("name", it.name)
+                put("interval", it.interval)
+                put("messages", it.messages)
+            })
+        }
+        return arr.toString()
+    }
+
+    private fun loadPresets(json: String): List<Preset> {
+        if (json.isBlank()) return emptyList()
+        val arr = JSONArray(json)
+        return List(arr.length()) {
+            val o = arr.getJSONObject(it)
+            Preset(o.getString("name"), o.getInt("interval"), o.getString("messages"))
         }
     }
 }
-
-data class MessengerUiState(
-    val ipAddress: String = "127.0.0.1",
-    val isRealtimeMsg: Boolean = false,
-    val isTriggerSFX: Boolean = true,
-    val isTypingIndicator: Boolean = true,
-    val isSendImmediately: Boolean = true
-)
