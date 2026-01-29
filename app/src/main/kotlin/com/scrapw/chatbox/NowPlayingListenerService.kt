@@ -1,8 +1,8 @@
-package com.scrapw.chatbox.nowplaying
+package com.scrapw.chatbox
 
+import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import android.media.MediaMetadata
 import android.media.session.PlaybackState
 import android.service.notification.NotificationListenerService
 import android.util.Log
@@ -13,7 +13,8 @@ class NowPlayingListenerService : NotificationListenerService() {
     private var activeController: MediaController? = null
 
     private val sessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-        pickBestController(controllers)
+        // controllers can be null and/or mutable; normalize it to List<MediaController>
+        pickBestController(controllers?.toList().orEmpty())
     }
 
     private val controllerCallback = object : MediaController.Callback() {
@@ -32,7 +33,7 @@ class NowPlayingListenerService : NotificationListenerService() {
             msm = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
             msm?.addOnActiveSessionsChangedListener(sessionsListener, null)
 
-            val controllers = msm?.getActiveSessions(null).orEmpty()
+            val controllers = msm?.getActiveSessions(null)?.toList().orEmpty()
             pickBestController(controllers)
             pushCurrent()
         } catch (t: Throwable) {
@@ -44,28 +45,30 @@ class NowPlayingListenerService : NotificationListenerService() {
         super.onListenerDisconnected()
         try {
             msm?.removeOnActiveSessionsChangedListener(sessionsListener)
-        } catch (_: Throwable) { }
+        } catch (_: Throwable) {}
         detachController()
         NowPlayingState.clear()
     }
 
     private fun pickBestController(controllers: List<MediaController>) {
-        // Prefer a playing controller; otherwise first one
-        val best = controllers.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-            ?: controllers.firstOrNull()
+        val best =
+            controllers.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+                ?: controllers.firstOrNull()
 
         if (best?.sessionToken == activeController?.sessionToken) return
 
         detachController()
         activeController = best
-        activeController?.registerCallback(controllerCallback)
+        try {
+            activeController?.registerCallback(controllerCallback)
+        } catch (_: Throwable) {}
         pushCurrent()
     }
 
     private fun detachController() {
         try {
             activeController?.unregisterCallback(controllerCallback)
-        } catch (_: Throwable) { }
+        } catch (_: Throwable) {}
         activeController = null
     }
 
@@ -96,4 +99,3 @@ class NowPlayingListenerService : NotificationListenerService() {
         )
     }
 }
-
