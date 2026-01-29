@@ -14,165 +14,137 @@ class UserPreferencesRepository(
 
     private companion object {
         const val TAG = "UserPreferencesRepo"
-        const val ERROR_READ = "Error reading preferences."
 
         // Network
         val IP_ADDRESS = stringPreferencesKey("ip_address")
         val PORT = intPreferencesKey("port")
 
-        // Messaging options
+        // Message behavior
         val MSG_REALTIME = booleanPreferencesKey("msg_realtime")
         val MSG_TRIGGER_SFX = booleanPreferencesKey("msg_trigger_sfx")
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // Cycle / AFK / Presets
+        // Cycle
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
-        val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
+        val CYCLE_INTERVAL = intPreferencesKey("cycle_interval")
 
+        // AFK
         val AFK_ENABLED = booleanPreferencesKey("afk_enabled")
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        val PRESETS_JSON = stringPreferencesKey("presets_json")
+        // Presets
         val SELECTED_PRESET = stringPreferencesKey("selected_preset")
+        val PRESETS_JSON = stringPreferencesKey("presets_json")
 
-        // Theme
-        val THEME_MODE = stringPreferencesKey("theme_mode") // "System" | "Light" | "Dark"
-
-        // Spotify OAuth + UI
-        val SPOTIFY_CLIENT_ID = stringPreferencesKey("spotify_client_id")
-        val SPOTIFY_ENABLED = booleanPreferencesKey("spotify_enabled")
-        val SPOTIFY_PRESET = intPreferencesKey("spotify_preset") // 1..5
-
+        // Spotify (token persistence – auth stays logged in)
         val SPOTIFY_ACCESS_TOKEN = stringPreferencesKey("spotify_access_token")
         val SPOTIFY_REFRESH_TOKEN = stringPreferencesKey("spotify_refresh_token")
-        val SPOTIFY_EXPIRES_AT_EPOCH_SEC = longPreferencesKey("spotify_expires_at_epoch_sec")
-
-        // PKCE temporary
-        val SPOTIFY_CODE_VERIFIER = stringPreferencesKey("spotify_code_verifier")
-        val SPOTIFY_STATE = stringPreferencesKey("spotify_state")
+        val SPOTIFY_TOKEN_EXPIRY = longPreferencesKey("spotify_token_expiry")
     }
 
-    // ─────────────────────────────────────
-    // Network
-    // ─────────────────────────────────────
-    val ipAddress: Flow<String> = get(IP_ADDRESS, "127.0.0.1")
-    suspend fun saveIpAddress(value: String) = save(IP_ADDRESS, value)
+    /* ---------------------------------------------------------
+     * Generic helpers
+     * --------------------------------------------------------- */
 
-    suspend fun savePort(value: Int) = save(PORT, value)
-
-    // ─────────────────────────────────────
-    // Messaging options
-    // ─────────────────────────────────────
-    val isRealtimeMsg: Flow<Boolean> = get(MSG_REALTIME, false)
-    suspend fun saveIsRealtimeMsg(value: Boolean) = save(MSG_REALTIME, value)
-
-    val isTriggerSfx: Flow<Boolean> = get(MSG_TRIGGER_SFX, true)
-    suspend fun saveIsTriggerSFX(value: Boolean) = save(MSG_TRIGGER_SFX, value)
-
-    val isTypingIndicator: Flow<Boolean> = get(MSG_TYPING_INDICATOR, true)
-    suspend fun saveTypingIndicator(value: Boolean) = save(MSG_TYPING_INDICATOR, value)
-
-    val isSendImmediately: Flow<Boolean> = get(MSG_SEND_DIRECTLY, true)
-    suspend fun saveIsSendImmediately(value: Boolean) = save(MSG_SEND_DIRECTLY, value)
-
-    // ─────────────────────────────────────
-    // Cycle
-    // ─────────────────────────────────────
-    val cycleEnabled: Flow<Boolean> = get(CYCLE_ENABLED, false)
-    suspend fun saveCycleEnabled(value: Boolean) = save(CYCLE_ENABLED, value)
-
-    val cycleMessages: Flow<String> = get(CYCLE_MESSAGES, "")
-    suspend fun saveCycleMessages(value: String) = save(CYCLE_MESSAGES, value)
-
-    val cycleInterval: Flow<Int> = get(CYCLE_INTERVAL, 3)
-    suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
-
-    // ─────────────────────────────────────
-    // AFK
-    // ─────────────────────────────────────
-    val afkEnabled: Flow<Boolean> = get(AFK_ENABLED, false)
-    suspend fun saveAfkEnabled(value: Boolean) = save(AFK_ENABLED, value)
-
-    val afkMessage: Flow<String> = get(AFK_MESSAGE, "AFK 🌙 back soon")
-    suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
-
-    // ─────────────────────────────────────
-    // Presets
-    // ─────────────────────────────────────
-    val presetsJson: Flow<String> = get(PRESETS_JSON, "")
-    suspend fun savePresetsJson(value: String) = save(PRESETS_JSON, value)
-
-    val selectedPreset: Flow<String> = get(SELECTED_PRESET, "")
-    suspend fun saveSelectedPreset(value: String) = save(SELECTED_PRESET, value)
-
-    // ─────────────────────────────────────
-    // Theme
-    // ─────────────────────────────────────
-    val themeMode: Flow<String> = get(THEME_MODE, "System")
-    suspend fun saveThemeMode(value: String) = save(THEME_MODE, value)
-
-    // ─────────────────────────────────────
-    // Spotify
-    // ─────────────────────────────────────
-    val spotifyClientId: Flow<String> = get(SPOTIFY_CLIENT_ID, "")
-    suspend fun saveSpotifyClientId(value: String) = save(SPOTIFY_CLIENT_ID, value)
-
-    val spotifyEnabled: Flow<Boolean> = get(SPOTIFY_ENABLED, false)
-    suspend fun saveSpotifyEnabled(value: Boolean) = save(SPOTIFY_ENABLED, value)
-
-    val spotifyPreset: Flow<Int> = get(SPOTIFY_PRESET, 1)
-    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value.coerceIn(1, 5))
-
-    val spotifyAccessToken: Flow<String> = get(SPOTIFY_ACCESS_TOKEN, "")
-    suspend fun saveSpotifyAccessToken(value: String) = save(SPOTIFY_ACCESS_TOKEN, value)
-
-    val spotifyRefreshToken: Flow<String> = get(SPOTIFY_REFRESH_TOKEN, "")
-    suspend fun saveSpotifyRefreshToken(value: String) = save(SPOTIFY_REFRESH_TOKEN, value)
-
-    val spotifyExpiresAtEpochSec: Flow<Long> = get(SPOTIFY_EXPIRES_AT_EPOCH_SEC, 0L)
-    suspend fun saveSpotifyExpiresAtEpochSec(value: Long) = save(SPOTIFY_EXPIRES_AT_EPOCH_SEC, value)
-
-    val spotifyCodeVerifier: Flow<String> = get(SPOTIFY_CODE_VERIFIER, "")
-    suspend fun saveSpotifyCodeVerifier(value: String) = save(SPOTIFY_CODE_VERIFIER, value)
-
-    val spotifyState: Flow<String> = get(SPOTIFY_STATE, "")
-    suspend fun saveSpotifyState(value: String) = save(SPOTIFY_STATE, value)
-
-    suspend fun clearSpotifyTokens() {
-        dataStore.edit { prefs ->
-            prefs[SPOTIFY_ACCESS_TOKEN] = ""
-            prefs[SPOTIFY_REFRESH_TOKEN] = ""
-            prefs[SPOTIFY_EXPIRES_AT_EPOCH_SEC] = 0L
-            prefs[SPOTIFY_CODE_VERIFIER] = ""
-            prefs[SPOTIFY_STATE] = ""
-        }
-    }
-
-    // ─────────────────────────────────────
-    // Internal helpers
-    // ─────────────────────────────────────
-    private fun <T> get(
-        key: Preferences.Key<T>,
-        defaultValue: T
-    ): Flow<T> {
-        return dataStore.data
-            .catch { exception ->
-                if (exception is IOException) {
-                    Log.e(TAG, ERROR_READ, exception)
+    private fun <T> get(key: Preferences.Key<T>, default: T): Flow<T> =
+        dataStore.data
+            .catch { e ->
+                if (e is IOException) {
+                    Log.e(TAG, "Error reading preferences", e)
                     emit(emptyPreferences())
                 } else {
-                    throw exception
+                    throw e
                 }
             }
-            .map { preferences -> preferences[key] ?: defaultValue }
+            .map { it[key] ?: default }
+
+    private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
+        dataStore.edit { it[key] = value }
     }
 
-    private suspend fun <T> save(
-        key: Preferences.Key<T>,
-        value: T
-    ) {
-        dataStore.edit { preferences -> preferences[key] = value }
+    /* ---------------------------------------------------------
+     * Network
+     * --------------------------------------------------------- */
+
+    val ipAddress = get(IP_ADDRESS, "127.0.0.1")
+    suspend fun saveIpAddress(value: String) = save(IP_ADDRESS, value)
+
+    val port = get(PORT, 9000)
+    suspend fun savePort(value: Int) = save(PORT, value)
+
+    /* ---------------------------------------------------------
+     * Message options
+     * --------------------------------------------------------- */
+
+    val isRealtimeMsg = get(MSG_REALTIME, false)
+    suspend fun saveIsRealtimeMsg(v: Boolean) = save(MSG_REALTIME, v)
+
+    val isTriggerSfx = get(MSG_TRIGGER_SFX, true)
+    suspend fun saveIsTriggerSFX(v: Boolean) = save(MSG_TRIGGER_SFX, v)
+
+    val isTypingIndicator = get(MSG_TYPING_INDICATOR, true)
+    suspend fun saveTypingIndicator(v: Boolean) = save(MSG_TYPING_INDICATOR, v)
+
+    val isSendImmediately = get(MSG_SEND_DIRECTLY, true)
+    suspend fun saveIsSendImmediately(v: Boolean) = save(MSG_SEND_DIRECTLY, v)
+
+    /* ---------------------------------------------------------
+     * Cycle
+     * --------------------------------------------------------- */
+
+    val cycleEnabled = get(CYCLE_ENABLED, false)
+    suspend fun saveCycleEnabled(v: Boolean) = save(CYCLE_ENABLED, v)
+
+    val cycleMessages = get(CYCLE_MESSAGES, "")
+    suspend fun saveCycleMessages(v: String) = save(CYCLE_MESSAGES, v)
+
+    val cycleInterval = get(CYCLE_INTERVAL, 3)
+    suspend fun saveCycleInterval(v: Int) = save(CYCLE_INTERVAL, v)
+
+    /* ---------------------------------------------------------
+     * AFK
+     * --------------------------------------------------------- */
+
+    val afkEnabled = get(AFK_ENABLED, false)
+    suspend fun saveAfkEnabled(v: Boolean) = save(AFK_ENABLED, v)
+
+    val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
+    suspend fun saveAfkMessage(v: String) = save(AFK_MESSAGE, v)
+
+    /* ---------------------------------------------------------
+     * Presets
+     * --------------------------------------------------------- */
+
+    val selectedPreset = get(SELECTED_PRESET, "")
+    suspend fun saveSelectedPreset(v: String) = save(SELECTED_PRESET, v)
+
+    val presetsJson = get(PRESETS_JSON, "")
+    suspend fun savePresetsJson(v: String) = save(PRESETS_JSON, v)
+
+    /* ---------------------------------------------------------
+     * Spotify auth persistence
+     * (this is why login survives app restarts)
+     * --------------------------------------------------------- */
+
+    val spotifyAccessToken = get(SPOTIFY_ACCESS_TOKEN, "")
+    suspend fun saveSpotifyAccessToken(v: String) =
+        save(SPOTIFY_ACCESS_TOKEN, v)
+
+    val spotifyRefreshToken = get(SPOTIFY_REFRESH_TOKEN, "")
+    suspend fun saveSpotifyRefreshToken(v: String) =
+        save(SPOTIFY_REFRESH_TOKEN, v)
+
+    val spotifyTokenExpiry = get(SPOTIFY_TOKEN_EXPIRY, 0L)
+    suspend fun saveSpotifyTokenExpiry(v: Long) =
+        save(SPOTIFY_TOKEN_EXPIRY, v)
+
+    suspend fun clearSpotifyAuth() {
+        dataStore.edit {
+            it.remove(SPOTIFY_ACCESS_TOKEN)
+            it.remove(SPOTIFY_REFRESH_TOKEN)
+            it.remove(SPOTIFY_TOKEN_EXPIRY)
+        }
     }
 }
