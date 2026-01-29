@@ -1,37 +1,29 @@
-package com.scrapw.chatbox.spotify
+package com.scrapw.chatbox
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import com.scrapw.chatbox.ChatboxApplication
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import com.scrapw.chatbox.ui.ChatboxViewModel
 
-/**
- * Receives: chatbox://spotify-callback?code=...&state=...
- * Exchanges code -> tokens and stores them in DataStore.
- * Then returns user to MainActivity.
- */
-class SpotifyCallbackActivity : ComponentActivity() {
-
+class SpotifyCallbackActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val uri: Uri? = intent?.data
-        if (uri != null) {
-            val repo = (application as ChatboxApplication).userPreferencesRepository
-            CoroutineScope(Dispatchers.IO).launch {
-                SpotifyTokenExchange.exchangeAndStore(repo, uri)
-            }
+        val data: Uri? = intent?.data
+        val code = data?.getQueryParameter("code")
+        val state = data?.getQueryParameter("state")
+
+        if (!code.isNullOrBlank() && !state.isNullOrBlank()) {
+            try {
+                ChatboxViewModel.getInstance().onSpotifyAuthCodeReceived(code, state)
+            } catch (_: Throwable) { }
         }
 
-        // Return to the app
-        val launch = packageManager.getLaunchIntentForPackage(packageName)
-        launch?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        if (launch != null) startActivity(launch)
-
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
         finish()
     }
 }
