@@ -26,23 +26,28 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // Cycle
+        // Cycle persistence
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
-        val CYCLE_INTERVAL = intPreferencesKey("cycle_interval")
+        val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // Now Playing (we keep names as "spotify_*" so your UI/ViewModel stays simple)
+        // Now Playing (kept spotify naming in UI)
         val SPOTIFY_ENABLED = booleanPreferencesKey("spotify_enabled")
-        val SPOTIFY_DEMO = booleanPreferencesKey("spotify_demo")
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
+        val SPOTIFY_DEMO = booleanPreferencesKey("spotify_demo_enabled")
+
+        // Separate refresh interval for the progress bar (re-send)
+        val MUSIC_REFRESH_INTERVAL = intPreferencesKey("music_refresh_interval_seconds")
     }
 
+    // Network
     val ipAddress = get(IP_ADDRESS, "127.0.0.1")
     suspend fun saveIpAddress(value: String) = save(IP_ADDRESS, value)
 
     val port = get(PORT, 9000)
     suspend fun savePort(value: Int) = save(PORT, value)
 
+    // Message options
     val isRealtimeMsg = get(MSG_REALTIME, false)
     suspend fun saveIsRealtimeMsg(value: Boolean) = save(MSG_REALTIME, value)
 
@@ -65,15 +70,19 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val cycleInterval = get(CYCLE_INTERVAL, 3)
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
-    // Now Playing prefs
+    // Now Playing settings
     val spotifyEnabled = get(SPOTIFY_ENABLED, false)
     suspend fun saveSpotifyEnabled(value: Boolean) = save(SPOTIFY_ENABLED, value)
+
+    val spotifyPreset = get(SPOTIFY_PRESET, 1)
+    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
 
     val spotifyDemo = get(SPOTIFY_DEMO, false)
     suspend fun saveSpotifyDemo(value: Boolean) = save(SPOTIFY_DEMO, value)
 
-    val spotifyPreset = get(SPOTIFY_PRESET, 1)
-    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
+    // Music refresh speed (progress bar refresh)
+    val musicRefreshInterval = get(MUSIC_REFRESH_INTERVAL, 1)
+    suspend fun saveMusicRefreshInterval(value: Int) = save(MUSIC_REFRESH_INTERVAL, value)
 
     private fun <T> get(key: Preferences.Key<T>, defaultValue: T): Flow<T> {
         return dataStore.data
@@ -89,8 +98,6 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     }
 
     private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
-        dataStore.edit { preferences ->
-            preferences[key] = value
-        }
+        dataStore.edit { preferences -> preferences[key] = value }
     }
 }
