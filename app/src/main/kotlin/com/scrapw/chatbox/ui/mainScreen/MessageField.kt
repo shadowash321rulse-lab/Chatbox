@@ -59,7 +59,7 @@ fun MessageField(
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 6,
-                        placeholder = { Text("One message per line. Spotify always shows underneath automatically.") }
+                        placeholder = { Text("One message per line. Spotify always appears under cycle automatically.") }
                     )
 
                     TextField(
@@ -74,7 +74,6 @@ fun MessageField(
                         placeholder = { Text("Seconds between messages (min 1)") }
                     )
 
-                    // ✅ Dedicated cycle start/stop buttons
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -103,37 +102,33 @@ fun MessageField(
         }
 
         // ============================
-        // Spotify preset tester (preview)
+        // Spotify output toggles (VRChat test)
         // ============================
         ElevatedCard {
             Column(
                 Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Spotify preset preview", style = MaterialTheme.typography.titleMedium)
+                Text("Spotify block (VRChat)", style = MaterialTheme.typography.titleMedium)
 
-                var previewEnabled by remember { mutableStateOf(true) }
-                var demoProgressSec by remember { mutableIntStateOf(0) }
-                val demoDurationSec = 80 // 1:20
-                val tickMs = 800L
-
-                LaunchedEffect(previewEnabled) {
-                    while (previewEnabled) {
-                        delay(tickMs)
-                        demoProgressSec = (demoProgressSec + 1) % (demoDurationSec + 1)
-                    }
-                }
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Preview mode")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Enable Spotify block")
                     Spacer(Modifier.weight(1f))
-                    Switch(checked = previewEnabled, onCheckedChange = { previewEnabled = it })
+                    Switch(
+                        checked = chatboxViewModel.spotifyEnabled,
+                        onCheckedChange = { chatboxViewModel.setSpotifyEnabled(it) }
+                    )
                 }
 
-                // ✅ 5 buttons always accessible
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Demo mode (shows without Spotify)")
+                    Spacer(Modifier.weight(1f))
+                    Switch(
+                        checked = chatboxViewModel.spotifyDemoEnabled,
+                        onCheckedChange = { chatboxViewModel.setSpotifyDemoEnabled(it) }
+                    )
+                }
+
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -154,16 +149,7 @@ fun MessageField(
                     }
                 }
 
-                val pMs = demoProgressSec * 1000L
-                val dMs = demoDurationSec * 1000L
-
-                Text("All presets (moving marker):", style = MaterialTheme.typography.labelMedium)
-
-                PresetLine("1) Love", formatPresetLine(1, pMs, dMs))
-                PresetLine("2) Minimal", formatPresetLine(2, pMs, dMs))
-                PresetLine("3) Crystal", formatPresetLine(3, pMs, dMs))
-                PresetLine("4) Soundwave", formatPresetLine(4, pMs, dMs))
-                PresetLine("5) Geometry", formatPresetLine(5, pMs, dMs))
+                Text("This card only proves the VRChat output works. Real Spotify auth comes next.")
             }
         }
 
@@ -198,74 +184,3 @@ fun MessageField(
         }
     }
 }
-
-@Composable
-private fun PresetLine(title: String, line: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, modifier = Modifier.width(110.dp), style = MaterialTheme.typography.bodySmall)
-        Text(line, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-private fun formatPresetLine(preset: Int, progressMs: Long, durationMs: Long): String {
-    val dur = durationMs.coerceAtLeast(1L)
-    val prog = progressMs.coerceIn(0L, dur)
-
-    val left = formatTime(prog)
-    val right = formatTime(dur)
-
-    return when (preset.coerceIn(1, 5)) {
-        1 -> {
-            val inner = movingBar(width = 8, progress = prog.toFloat() / dur.toFloat(), filled = "━", empty = "━", marker = "◉")
-            "♡$inner♡ $left / $right"
-        }
-        2 -> {
-            val bar = movingBar(width = 13, progress = prog.toFloat() / dur.toFloat(), filled = "━", empty = "─", marker = "◉")
-            "$bar $left/$right"
-        }
-        3 -> {
-            val bar = movingBar(width = 9, progress = prog.toFloat() / dur.toFloat(), filled = "⟡", empty = "⟡", marker = "◉")
-            "$bar $left / $right"
-        }
-        4 -> {
-            val wave = movingWave(progress = prog.toFloat() / dur.toFloat())
-            "$wave $left / $right"
-        }
-        else -> {
-            val bar = movingBar(width = 11, progress = prog.toFloat() / dur.toFloat(), filled = "▣", empty = "▢", marker = "◉")
-            "$bar $left / $right"
-        }
-    }
-}
-
-private fun movingBar(width: Int, progress: Float, filled: String, empty: String, marker: String): String {
-    val w = width.coerceAtLeast(2)
-    val idx = ((progress.coerceIn(0f, 1f)) * (w - 1)).roundToInt()
-    val sb = StringBuilder()
-    for (i in 0 until w) {
-        sb.append(
-            when {
-                i == idx -> marker
-                i < idx -> filled
-                else -> empty
-            }
-        )
-    }
-    return sb.toString()
-}
-
-private fun movingWave(progress: Float): String {
-    val wave = listOf("▁", "▂", "▃", "▄", "▅", "▅", "▄", "▃", "▂", "▁", "▁")
-    val idx = ((progress.coerceIn(0f, 1f)) * (wave.size - 1)).roundToInt()
-    val sb = StringBuilder()
-    for (i in wave.indices) sb.append(if (i == idx) "●" else wave[i])
-    return sb.toString()
-}
-
-private fun formatTime(ms: Long): String {
-    val totalSec = (ms / 1000L).coerceAtLeast(0L)
-    val m = totalSec / 60L
-    val s = totalSec % 60L
-    return if (s < 10) "${m}:0${s}" else "${m}:${s}"
-}
-
