@@ -20,10 +20,10 @@
         <!-- Existing overlay -->
         <service android:name=".overlay.OverlayService" />
 
-        <!-- NEW: Now Playing listener (Notification Access / MediaSession) -->
+        <!-- Now Playing listener (Notification Access) -->
         <service
             android:name=".NowPlayingListenerService"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
