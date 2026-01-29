@@ -1,19 +1,9 @@
 package com.scrapw.chatbox
 
-import android.content.Context
-import androidx.work.CoroutineWorker
-import androidx.work.WorkerParameters
-
 /**
- * Compatibility worker left in place so builds don't break.
- * OAuth callback is handled by SpotifyCallbackActivity + SpotifyTokenExchange.
+ * This project does NOT include WorkManager.
+ * This file is a compile-safe stub kept only for compatibility with earlier experiments.
+ *
+ * Spotify callback is handled via SpotifyCallbackActivity / SpotifyTokenExchange instead.
  */
-class SpotifyCallbackWorker(
-    appContext: Context,
-    params: WorkerParameters
-) : CoroutineWorker(appContext, params) {
-
-    override suspend fun doWork(): Result {
-        return Result.success()
-    }
-}
+class SpotifyCallbackWorker
