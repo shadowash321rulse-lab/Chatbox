@@ -28,24 +28,17 @@ fun MessageField(
     val context = LocalContext.current
     var tab by remember { mutableStateOf(TabPage.Cycle) }
 
-    // Root: content scrolls, bottom bar stays visible
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        // ==========================
-        // Top card (tabs + content)
-        // ==========================
         ElevatedCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f, fill = true) // <-- gives room; prevents bottom bar being pushed off
+                .weight(1f, fill = true)
         ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-            ) {
+            Column(Modifier.fillMaxSize()) {
                 TabRow(selectedTabIndex = tab.ordinal) {
                     Tab(
                         selected = tab == TabPage.Cycle,
@@ -64,7 +57,6 @@ fun MessageField(
                     )
                 }
 
-                // Scroll only the tab content
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -241,26 +233,37 @@ fun MessageField(
                             ) { Text("Send once now (test)") }
 
                             Text(
-                                "If it still says not detected: enable Notification Access, then force-close Chatbox and reopen.",
+                                "For real detection: enable Notification Access, then force-close Chatbox and reopen. Spotify must show a media notification.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
 
                         TabPage.Debug -> {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
+
+                            // THE IMPORTANT NEW LINES:
+                            Text("Listener connected: ${chatboxViewModel.nowPlayingListenerConnected}")
+                            Text("Active package: ${chatboxViewModel.nowPlayingActivePackage.ifBlank { "(none)" }}")
+
+                            Divider()
+
                             Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
-                            Text("Artist: ${chatboxViewModel.lastNowPlayingArtist}")
-                            Text("Title: ${chatboxViewModel.lastNowPlayingTitle}")
+                            Text("Artist: ${chatboxViewModel.lastNowPlayingArtist.ifBlank { "(blank)" }}")
+                            Text("Title: ${chatboxViewModel.lastNowPlayingTitle.ifBlank { "(blank)" }}")
+
+                            Divider()
 
                             val lastSent = chatboxViewModel.lastSentToVrchatAtMs
-                            Text("Last sent: ${if (lastSent == 0L) "never" else "$lastSent"}")
+                            Text("Last sent: ${if (lastSent == 0L) "never" else lastSent.toString()}")
 
                             Text(
-                                "If detected=false:\n" +
-                                    "• Enable Notification Access\n" +
-                                    "• Force close Chatbox and reopen\n" +
-                                    "• Make sure Spotify shows a media notification\n" +
-                                    "• Disable battery optimization for Chatbox",
+                                "If Listener connected=false:\n" +
+                                    "• Notification Access is NOT enabled or service isn't running.\n\n" +
+                                    "If connected=true but package != spotify:\n" +
+                                    "• Another app is the active player.\n\n" +
+                                    "If connected=true and package=spotify but title blank:\n" +
+                                    "• Spotify notifications are OFF, or phone blocks listener.\n" +
+                                    "• Disable battery optimization for Chatbox.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -271,12 +274,7 @@ fun MessageField(
 
         Spacer(Modifier.height(10.dp))
 
-        // ==========================
-        // Bottom bar (ALWAYS visible)
-        // ==========================
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -304,4 +302,3 @@ fun MessageField(
         }
     }
 }
-
