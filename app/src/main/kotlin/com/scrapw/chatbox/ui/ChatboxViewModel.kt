@@ -246,7 +246,7 @@ class ChatboxViewModel(
     /**
      * ✅ Spotify is NEVER placeable.
      * - If user typed {SPOTIFY}, strip it out.
-     * - Spotify (if available) is ALWAYS appended as the bottom block.
+     * - Spotify (if available) is ALWAYS appended at the bottom.
      */
     private fun buildOutgoingMessageAlwaysBottom(cycleLine: String): String {
         val cleanedCycle = cycleLine.replace(SPOTIFY_TOKEN_TEXT, "").trim()
@@ -267,11 +267,11 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Spotify formatter (presets)
+    // Spotify (DEMO WIRED) – real auth later
     // ============================
     var spotifyEnabled by mutableStateOf(false)
-    var spotifyClientId by mutableStateOf("")
     var spotifyPreset by mutableStateOf(1) // 1..5
+    var spotifyDemoEnabled by mutableStateOf(true)
 
     data class SpotifyNowPlaying(
         val isPlaying: Boolean,
@@ -281,22 +281,45 @@ class ChatboxViewModel(
         val durationMs: Long
     )
 
-    var spotifyNowPlaying by mutableStateOf<SpotifyNowPlaying?>(null)
-        private set
-
     private var spotifyPollJob: Job? = null
 
     fun updateSpotifyPreset(preset: Int) {
         spotifyPreset = preset.coerceIn(1, 5)
-        viewModelScope.launch { userPreferencesRepository.saveSpotifyPreset(spotifyPreset) }
+    }
+
+    fun setSpotifyEnabled(enabled: Boolean) {
+        spotifyEnabled = enabled
+        if (!enabled) stopSpotifyPolling() else startSpotifyPolling()
+    }
+
+    fun setSpotifyDemoEnabled(enabled: Boolean) {
+        spotifyDemoEnabled = enabled
+        if (spotifyEnabled) {
+            // refresh instantly
+            startSpotifyPolling()
+        }
     }
 
     fun startSpotifyPolling() {
-        // formatter-only step; real Spotify comes next
+        // DEMO: generate now playing continuously so you can see it in VRChat
         spotifyPollJob?.cancel()
         spotifyPollJob = viewModelScope.launch {
             while (spotifyEnabled) {
-                delay(1500L)
+                if (spotifyDemoEnabled) {
+                    val duration = 80_000L // 1:20
+                    val prog = (System.currentTimeMillis() % duration).coerceIn(0L, duration)
+                    spotifyNowPlaying = SpotifyNowPlaying(
+                        isPlaying = true,
+                        artist = "Demo Artist",
+                        track = "Demo Song",
+                        progressMs = prog,
+                        durationMs = duration
+                    )
+                } else {
+                    // real spotify comes later; for now it will show nothing
+                    spotifyNowPlaying = null
+                }
+                delay(800L)
             }
         }
     }
@@ -304,7 +327,11 @@ class ChatboxViewModel(
     fun stopSpotifyPolling() {
         spotifyPollJob?.cancel()
         spotifyPollJob = null
+        spotifyNowPlaying = null
     }
+
+    var spotifyNowPlaying by mutableStateOf<SpotifyNowPlaying?>(null)
+        private set
 
     fun buildSpotifyBlockOrEmpty(): String {
         if (!spotifyEnabled) return ""
@@ -312,7 +339,7 @@ class ChatboxViewModel(
 
         val progressLine = formatProgressLine(np.progressMs, np.durationMs, spotifyPreset)
 
-        // title overflow rule: remove artist if overflow
+        // Overflow rule: remove artist if needed
         val titleMax = (VRCHAT_LIMIT - progressLine.length - 1).coerceAtLeast(0)
         val title = clampTitleToBudget(np.artist, np.track, titleMax)
 
@@ -335,7 +362,7 @@ class ChatboxViewModel(
         return text.take(maxLen - 1) + "…"
     }
 
-    // ✅ YOUR 5 PRESETS (LOCKED)
+    // ✅ YOUR 5 PRESETS
     private fun formatProgressLine(progressMs: Long, durationMs: Long, preset: Int): String {
         val dur = durationMs.coerceAtLeast(1L)
         val prog = progressMs.coerceIn(0L, dur)
@@ -398,25 +425,18 @@ class ChatboxViewModel(
     }
 
     // ============================
-    // Persistence wiring
+    // Persistence wiring (cycle only kept here)
     // ============================
     init {
         viewModelScope.launch {
             cycleEnabled = userPreferencesRepository.cycleEnabled.first()
             cycleMessages = userPreferencesRepository.cycleMessages.first()
             cycleIntervalSeconds = userPreferencesRepository.cycleInterval.first()
-
-            spotifyEnabled = userPreferencesRepository.spotifyEnabled.first()
-            spotifyClientId = userPreferencesRepository.spotifyClientId.first()
-            spotifyPreset = userPreferencesRepository.spotifyPreset.first().coerceIn(1, 5)
-
-            if (spotifyEnabled) startSpotifyPolling()
         }
 
         viewModelScope.launch { snapshotFlow { cycleEnabled }.collect { userPreferencesRepository.saveCycleEnabled(it) } }
         viewModelScope.launch { snapshotFlow { cycleMessages }.collect { userPreferencesRepository.saveCycleMessages(it) } }
         viewModelScope.launch { snapshotFlow { cycleIntervalSeconds }.collect { userPreferencesRepository.saveCycleInterval(it) } }
-        viewModelScope.launch { snapshotFlow { spotifyPreset }.collect { userPreferencesRepository.saveSpotifyPreset(it) } }
     }
 }
 
@@ -427,3 +447,4 @@ data class MessengerUiState(
     val isTypingIndicator: Boolean = true,
     val isSendImmediately: Boolean = true
 )
+
