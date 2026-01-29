@@ -7,10 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import com.scrapw.chatbox.R
 import com.scrapw.chatbox.ui.ChatboxViewModel
 
 @Composable
@@ -29,7 +26,10 @@ fun MessageField(
         // Cycle controls
         // ============================
         ElevatedCard {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
 
                 Row(
                     Modifier.fillMaxWidth(),
@@ -65,8 +65,7 @@ fun MessageField(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("Seconds between messages (min 1)") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+                        placeholder = { Text("Seconds between messages (min 1)") }
                     )
                 }
             }
@@ -76,7 +75,10 @@ fun MessageField(
         // Spotify controls
         // ============================
         ElevatedCard {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
 
                 Row(
                     Modifier.fillMaxWidth(),
@@ -87,7 +89,6 @@ fun MessageField(
                     Switch(
                         checked = chatboxViewModel.spotifyEnabled,
                         onCheckedChange = { enabled ->
-                            // ✅ NEW function names (no JVM clash)
                             chatboxViewModel.updateSpotifyEnabled(enabled)
                         }
                     )
@@ -98,7 +99,6 @@ fun MessageField(
                     TextField(
                         value = chatboxViewModel.spotifyClientId,
                         onValueChange = { id ->
-                            // ✅ NEW function names (no JVM clash)
                             chatboxViewModel.updateSpotifyClientId(id)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -106,15 +106,13 @@ fun MessageField(
                         placeholder = { Text("Spotify Client ID") }
                     )
 
-                    // Preset selector (1..5)
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Preset", modifier = Modifier.padding(end = 10.dp))
+                        Text("Preset")
                         Spacer(Modifier.weight(1f))
 
-                        // Small segmented-like buttons
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             (1..5).forEach { p ->
                                 val selected = chatboxViewModel.spotifyPreset == p
@@ -131,17 +129,10 @@ fun MessageField(
                         }
                     }
 
-                    // Optional: show preview of what will be sent (nice for debugging)
                     val preview = chatboxViewModel.buildSpotifyBlockOrEmpty()
                     if (preview.isNotBlank()) {
-                        Text(
-                            text = "Preview (VRChat):",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                        Text(
-                            text = preview,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Text("Preview (VRChat):", style = MaterialTheme.typography.labelMedium)
+                        Text(preview, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -162,8 +153,7 @@ fun MessageField(
                     onValueChange = { chatboxViewModel.onMessageTextChange(it) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    placeholder = { Text("Write a message") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)
+                    placeholder = { Text("Write a message") }
                 )
 
                 Spacer(Modifier.width(10.dp))
@@ -183,3 +173,4 @@ fun MessageField(
         }
     }
 }
+
