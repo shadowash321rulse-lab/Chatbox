@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools" >
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -15,25 +15,19 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Chatbox"
-        tools:targetApi="31">
+        tools:targetApi="31" >
 
         <service android:name=".overlay.OverlayService" />
 
-        <!-- Spotify OAuth callback: chatbox://spotify-callback?code=...&state=... -->
+        <!-- ✅ Spotify callback -->
         <activity
-            android:name=".spotify.SpotifyCallbackActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.Chatbox">
+            android:name=".SpotifyCallbackActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
-
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-
-                <data
-                    android:scheme="chatbox"
-                    android:host="spotify-callback" />
+                <data android:scheme="chatbox" android:host="spotify-callback" />
             </intent-filter>
         </activity>
 
@@ -41,14 +35,12 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Chatbox">
+            android:theme="@style/Theme.Chatbox" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
     </application>
 
 </manifest>
