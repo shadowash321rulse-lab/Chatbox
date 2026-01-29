@@ -25,7 +25,6 @@ import com.scrapw.chatbox.ui.mainScreen.Message
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -36,6 +35,7 @@ import kotlinx.coroutines.runBlocking
 import java.time.Instant
 import kotlin.math.max
 import kotlin.math.min
+import android.os.SystemClock
 
 class ChatboxViewModel(
     private val userPreferencesRepository: UserPreferencesRepository
@@ -69,7 +69,6 @@ class ChatboxViewModel(
 
     val conversationUiState = ConversationUiState()
 
-    // --- Existing settings flow (keep) ---
     private val storedIpState: StateFlow<String> =
         userPreferencesRepository.ipAddress.stateIn(
             scope = viewModelScope,
@@ -77,12 +76,10 @@ class ChatboxViewModel(
             initialValue = ""
         )
 
-    private val userInputIpState = MutableStateFlow("")
+    private val userInputIpState = kotlinx.coroutines.flow.MutableStateFlow("")
     var ipAddressLocked by mutableStateOf(false)
 
-    private val ipFlow = combine(storedIpState, userInputIpState) { a, b ->
-        if (b.isNotBlank()) b else a
-    }
+    private val ipFlow = combine(storedIpState, userInputIpState) { a, b -> if (b.isNotBlank()) b else a }
 
     val messengerUiState: StateFlow<MessengerUiState> = combine(
         ipFlow,
@@ -132,7 +129,6 @@ class ChatboxViewModel(
 
     val isAddressResolvable = mutableStateOf(true)
 
-    // overlay expects (TextFieldValue, Boolean)
     fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         messageText.value = message
@@ -184,7 +180,6 @@ class ChatboxViewModel(
     fun onSendImmediatelyChanged(isChecked: Boolean) =
         viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(isChecked) }
 
-    // --- Update checker (keep) ---
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
     fun checkUpdate() {
@@ -196,31 +191,17 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Shared output cache (prevents “cancel out”)
+    // AFK (toggle button)
     // =========================
-    private var cachedCycleLine by mutableStateOf("")
-    private var cachedNowPlayingLines by mutableStateOf<List<String>>(emptyList())
-
-    private var sendGateJob: Job? = null
-    private fun requestSendMerged(local: Boolean = false) {
-        // small debounce to merge simultaneous ticks
-        sendGateJob?.cancel()
-        sendGateJob = viewModelScope.launch {
-            delay(60)
-            val merged = buildMergedOutput(cachedCycleLine, cachedNowPlayingLines)
-            if (merged.isNotBlank()) {
-                sendToVrchatRaw(merged, local, addToConversation = false)
-            }
-        }
-    }
+    var afkEnabled by mutableStateOf(false)
+    var afkLine by mutableStateOf("AFK")
 
     // =========================
-    // Cycle (separate speed)
+    // Cycle
     // =========================
     var cycleEnabled by mutableStateOf(false)
     var cycleMessages by mutableStateOf("")
     var cycleIntervalSeconds by mutableStateOf(3)
-
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
@@ -232,8 +213,9 @@ class ChatboxViewModel(
         cycleJob = viewModelScope.launch {
             cycleIndex = 0
             while (cycleEnabled) {
-                cachedCycleLine = msgs[cycleIndex % msgs.size]
-                requestSendMerged(local)
+                val line = msgs[cycleIndex % msgs.size]
+                val outgoing = buildOutgoingText(cycleLine = line)
+                sendToVrchatRaw(outgoing, local, addToConversation = false)
 
                 cycleIndex = (cycleIndex + 1) % msgs.size
                 delay(cycleIntervalSeconds.coerceAtLeast(1).toLong() * 1000L)
@@ -247,14 +229,14 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Now Playing (phone music) – UI calls this “spotify”
+    // Now Playing (phone music) – UI still calls these “spotify”
     // =========================
     var spotifyEnabled by mutableStateOf(false)
     var spotifyDemoEnabled by mutableStateOf(false)
-    var spotifyPreset by mutableStateOf(1) // 1..5
+    var spotifyPreset by mutableStateOf(1)
     var musicRefreshSeconds by mutableStateOf(2)
 
-    // Debug fields
+    // Debug shown in UI
     var listenerConnected by mutableStateOf(false)
     var activePackage by mutableStateOf("(none)")
     var nowPlayingDetected by mutableStateOf(false)
@@ -262,48 +244,73 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
-    // internal timing (for smooth progress)
+    // Exposed for Debug tab
+    var nowPlayingIsPlaying by mutableStateOf(false)
+
+    // raw snapshot values
     private var nowPlayingDurationMs by mutableStateOf(0L)
-    private var nowPlayingPositionMs by mutableStateOf(0L)
-    private var nowPlayingPositionUpdateTimeMs by mutableStateOf(0L)
-    private var nowPlayingPlaybackSpeed by mutableStateOf(1f)
-    private var nowPlayingIsPlaying by mutableStateOf(false)
+    private var basePositionMs by mutableStateOf(0L)
+    private var baseUpdateTimeMs by mutableStateOf(0L)
+    private var playbackSpeed by mutableStateOf(1f)
+
+    // live position (keeps moving)
+    private var livePositionMs by mutableStateOf(0L)
 
     private var nowPlayingJob: Job? = null
 
-    // ✅ Pull NowPlayingState into these fields continuously
     init {
+        // Map NowPlayingState → ViewModel fields
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
-                activePackage = if (s.activePackage.isBlank()) "(none)" else s.activePackage
+                activePackage = s.activePackage.ifBlank { "(none)" }
                 nowPlayingDetected = s.detected
 
                 lastNowPlayingTitle = if (s.title.isBlank()) "(blank)" else s.title
                 lastNowPlayingArtist = if (s.artist.isBlank()) "(blank)" else s.artist
 
                 nowPlayingDurationMs = s.durationMs
-                nowPlayingPositionMs = s.positionMs
+
+                basePositionMs = s.positionMs
+                baseUpdateTimeMs = s.positionUpdateTimeMs
+                playbackSpeed = s.playbackSpeed
                 nowPlayingIsPlaying = s.isPlaying
 
-                // If your NowPlayingState has these, progress updates smoothly without touching playback:
-                nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
-                nowPlayingPlaybackSpeed = s.playbackSpeed
+                livePositionMs = computeLivePositionMs()
+            }
+        }
+
+        // Smooth tick for progress (even if notification doesn't update)
+        viewModelScope.launch {
+            while (true) {
+                if (nowPlayingDetected && nowPlayingIsPlaying) {
+                    livePositionMs = computeLivePositionMs()
+                }
+                delay(250L)
             }
         }
     }
 
+    private fun computeLivePositionMs(): Long {
+        if (!nowPlayingIsPlaying) return clampToDuration(basePositionMs, nowPlayingDurationMs)
+
+        val now = SystemClock.elapsedRealtime()
+        val dt = max(0L, now - baseUpdateTimeMs)
+        val advanced = (dt.toDouble() * playbackSpeed.toDouble()).toLong()
+        return clampToDuration(basePositionMs + advanced, nowPlayingDurationMs)
+    }
+
+    private fun clampToDuration(pos: Long, duration: Long): Long {
+        if (duration <= 0L) return max(0L, pos)
+        return pos.coerceIn(0L, duration)
+    }
+
     fun notificationAccessIntent(): Intent {
-        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
-        if (!enabled) {
-            cachedNowPlayingLines = emptyList()
-            requestSendMerged(false)
-        }
     }
 
     fun setSpotifyDemoFlag(enabled: Boolean) {
@@ -312,8 +319,6 @@ class ChatboxViewModel(
 
     fun updateSpotifyPreset(preset: Int) {
         spotifyPreset = preset.coerceIn(1, 5)
-        cachedNowPlayingLines = buildNowPlayingLines()
-        requestSendMerged(false)
     }
 
     fun startNowPlayingSender(local: Boolean = false) {
@@ -322,9 +327,9 @@ class ChatboxViewModel(
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
-                cachedNowPlayingLines = buildNowPlayingLines()
-                if (cachedNowPlayingLines.isNotEmpty() || cachedCycleLine.isNotBlank()) {
-                    requestSendMerged(local)
+                val outgoing = buildOutgoingText(cycleLine = null)
+                if (outgoing.isNotBlank()) {
+                    sendToVrchatRaw(outgoing, local, addToConversation = false)
                 }
                 delay(musicRefreshSeconds.coerceAtLeast(1).toLong() * 1000L)
             }
@@ -337,8 +342,10 @@ class ChatboxViewModel(
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
-        cachedNowPlayingLines = buildNowPlayingLines()
-        requestSendMerged(local)
+        val outgoing = buildOutgoingText(cycleLine = null)
+        if (outgoing.isNotBlank()) {
+            sendToVrchatRaw(outgoing, local, addToConversation = false)
+        }
     }
 
     fun stopAll() {
@@ -347,100 +354,105 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Build merged output (cycle on top, now playing under)
+    // Compose outgoing text:
+    // AFK line (if enabled) on top,
+    // then cycle line,
+    // then NowPlaying block at bottom
     // =========================
-    private fun buildMergedOutput(cycleLine: String, nowPlayingLines: List<String>): String {
-        val lines = ArrayList<String>(3)
+    private fun buildOutgoingText(cycleLine: String?): String {
+        val lines = mutableListOf<String>()
 
-        val cycle = cycleLine.trim()
+        if (afkEnabled) {
+            lines += afkLine.trim().ifBlank { "AFK" }
+        }
+
+        val cycle = cycleLine?.trim().orEmpty()
         if (cycle.isNotEmpty()) lines += cycle
 
-        if (spotifyEnabled) lines.addAll(nowPlayingLines)
+        val np = buildNowPlayingLines()
+        lines.addAll(np)
 
-        return joinWithLimitKeepBottom(lines, 144)
+        return joinWithLimit(lines, 144)
     }
 
     private fun buildNowPlayingLines(): List<String> {
         if (!spotifyEnabled) return emptyList()
 
-        val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
-        val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
-        if (!spotifyDemoEnabled && !nowPlayingDetected) return emptyList()
+        val detected = nowPlayingDetected
+        val isPlaying = nowPlayingIsPlaying
 
-        val safeTitle = title.takeIf { it != "(blank)" }.orEmpty()
-        val safeArtist = artist.takeIf { it != "(blank)" }.orEmpty()
+        // Demo mode if nothing detected
+        val title = if (spotifyDemoEnabled && !detected) "Pretty Girl" else lastNowPlayingTitle
+        val artist = if (spotifyDemoEnabled && !detected) "Clairo" else lastNowPlayingArtist
+
+        if (!spotifyDemoEnabled && !detected) return emptyList()
+
+        val safeTitle = title.takeIf { it != "(blank)" } ?: ""
+        val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
         val maxLine = 42
         val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
         val line1 = when {
             combined.length <= maxLine -> combined
-            safeTitle.length <= maxLine -> safeTitle // drop artist if overflow
+            safeTitle.length <= maxLine -> safeTitle
             else -> safeTitle.take(maxLine - 1) + "…"
         }.trim()
 
-        val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 80_000L else nowPlayingDurationMs
-        val safeDur = max(1L, dur)
+        // PAUSED behavior:
+        // If paused → show “⏸ paused” instead of progress line
+        if (!isPlaying) {
+            val pos = if (spotifyDemoEnabled && !detected) 58_000L else livePositionMs
+            val dur = if (spotifyDemoEnabled && !detected) 80_000L else nowPlayingDurationMs
+            val time = "${fmtTime(pos)} / ${fmtTime(if (dur > 0) dur else max(pos, 1L))}"
+            val line2 = "⏸ paused  $time".trim()
+            return listOf(line1, line2).filter { it.isNotBlank() }
+        }
 
-        // ✅ Smooth “current position” even if you don’t interact with playback
-        val pos = if (spotifyDemoEnabled && !nowPlayingDetected) {
-            58_000L
-        } else {
-            val base = nowPlayingPositionMs
-            val t0 = nowPlayingPositionUpdateTimeMs
-            val now = android.os.SystemClock.elapsedRealtime()
-            val speed = nowPlayingPlaybackSpeed
-            val playing = nowPlayingIsPlaying
-            if (!playing || t0 <= 0L) base else base + ((now - t0) * speed).toLong()
-        }.coerceIn(0L, safeDur)
+        // Playing → progress line
+        val dur = if (spotifyDemoEnabled && !detected) 80_000L else nowPlayingDurationMs
+        val pos = if (spotifyDemoEnabled && !detected) 58_000L else livePositionMs
 
-        val bar = renderProgressBar(spotifyPreset, pos, safeDur)
-        val time = "${fmtTime(pos)} / ${fmtTime(safeDur)}"
+        val bar = renderProgressBar(spotifyPreset, pos, dur)
+        val time = "${fmtTime(pos)} / ${fmtTime(if (dur > 0) dur else max(pos, 1L))}"
         val line2 = "$bar $time".trim()
 
         return listOf(line1, line2).filter { it.isNotBlank() }
     }
 
-    // =========================
-    // Your 5 preset bars (short)
-    // =========================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // ♡━━━◉━━━━♡
+            1 -> {
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
                 inner[idx] = '◉'
                 "♡" + inner.concatToString() + "♡"
             }
-
-            2 -> { // minimal (short)
+            2 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-
-            3 -> { // crystal (short)
+            3 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-
-            4 -> { // soundwave (10 chars)
+            4 -> {
                 val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
                 out[idx] = '●'
                 out.concatToString()
             }
-
-            else -> { // geometry (10 chars)
+            else -> {
                 val bg = charArrayOf('▣','▣','▣','▢','▢','▢','▢','▢','▢','▢')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
@@ -457,11 +469,12 @@ class ChatboxViewModel(
         return "${m}:${s.toString().padStart(2, '0')}"
     }
 
-    // Trims from top first to keep bottom block (Now Playing) near the 144 limit
-    private fun joinWithLimitKeepBottom(lines: List<String>, limit: Int): String {
+    private fun joinWithLimit(lines: List<String>, limit: Int): String {
+        if (lines.isEmpty()) return ""
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
 
+        // build bottom-up so NowPlaying is preserved first
         val out = ArrayList<String>()
         var total = 0
 
@@ -471,7 +484,7 @@ class ChatboxViewModel(
             if (total + add > limit) {
                 if (i == 0 && limit - total > 2) {
                     val remain = limit - total - (if (out.isEmpty()) 0 else 1)
-                    val cut = line.take(max(1, remain - 1)) + "…"
+                    val cut = line.take(remain - 1) + "…"
                     out.add(0, cut)
                     total = limit
                 }
@@ -480,6 +493,7 @@ class ChatboxViewModel(
             out.add(0, line)
             total += add
         }
+
         return out.joinToString("\n")
     }
 
@@ -505,4 +519,3 @@ data class MessengerUiState(
     val isTypingIndicator: Boolean = true,
     val isSendImmediately: Boolean = true
 )
-
