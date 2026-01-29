@@ -1,17 +1,21 @@
 package com.scrapw.chatbox.ui.mainScreen
 
+import android.app.Activity
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
 
@@ -20,6 +24,9 @@ fun MessageField(
     chatboxViewModel: ChatboxViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -57,7 +64,7 @@ fun MessageField(
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 6,
-                        placeholder = { Text("One message per line. Spotify appears under cycle automatically.") }
+                        placeholder = { Text("One message per line (Spotify always shows under cycle automatically).") }
                     )
 
                     TextField(
@@ -95,22 +102,32 @@ fun MessageField(
                             Text("Stop Cycle")
                         }
                     }
+
+                    Text(
+                        "Cycle sends:\n• your cycle line\n• Spotify block underneath (if enabled)",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    Text(
+                        "Enable cycle to send messages repeatedly.\nSpotify output also sends under cycle when enabled.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }
 
         // ============================
-        // Spotify output toggles (VRChat test)
+        // Spotify controls (Auth + preset)
         // ============================
         ElevatedCard {
             Column(
                 Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Spotify block (VRChat)", style = MaterialTheme.typography.titleMedium)
+                Text("Spotify", style = MaterialTheme.typography.titleMedium)
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enable Spotify block")
+                    Text("Enable Spotify block (VRChat)")
                     Spacer(Modifier.weight(1f))
                     Switch(
                         checked = chatboxViewModel.spotifyEnabled,
@@ -118,15 +135,43 @@ fun MessageField(
                     )
                 }
 
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Demo mode (shows without Spotify)")
-                    Spacer(Modifier.weight(1f))
-                    Switch(
-                        checked = chatboxViewModel.spotifyDemoEnabled,
-                        onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
-                    )
+                TextField(
+                    value = chatboxViewModel.spotifyClientId,
+                    onValueChange = { chatboxViewModel.setSpotifyClientIdValue(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Spotify Client ID (from Spotify Developer Dashboard)") }
+                )
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (activity != null) {
+                                chatboxViewModel.beginSpotifyLogin(activity)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = activity != null && chatboxViewModel.spotifyClientId.isNotBlank()
+                    ) {
+                        Icon(Icons.Filled.Link, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Login")
+                    }
+
+                    OutlinedButton(
+                        onClick = { chatboxViewModel.logoutSpotify() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Logout, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Logout")
+                    }
                 }
 
+                // Presets 1..5 always visible
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -134,25 +179,57 @@ fun MessageField(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Preset", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.width(4.dp))
+                    Text("Progress preset", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(6.dp))
+
                     (1..5).forEach { p ->
                         val selected = chatboxViewModel.spotifyPreset == p
+                        val colors =
+                            if (selected) ButtonDefaults.buttonColors()
+                            else ButtonDefaults.outlinedButtonColors()
+
                         Button(
                             onClick = { chatboxViewModel.updateSpotifyPreset(p) },
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            colors = if (selected) ButtonDefaults.buttonColors()
-                            else ButtonDefaults.outlinedButtonColors()
+                            colors = colors
                         ) { Text("$p") }
                     }
                 }
 
-                Text("Turn on cycle + start cycle to send demo Spotify to VRChat.")
+                // Debug (demo mode hidden here)
+                var debugExpanded by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    onClick = { debugExpanded = !debugExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (debugExpanded) "Hide Debug" else "Show Debug")
+                }
+
+                if (debugExpanded) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Demo mode (no Spotify needed)")
+                        Spacer(Modifier.weight(1f))
+                        Switch(
+                            checked = chatboxViewModel.spotifyDemoEnabled,
+                            onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
+                        )
+                    }
+
+                    Text(
+                        "Demo only helps testing presets.\nReal Spotify requires Client ID + Login + Spotify playing music.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Text(
+                    "Note: Spotify block is automatic.\nYou do NOT type {spotify} anywhere.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 
         // ============================
-        // Message input + buttons
+        // Manual message input + quick + send
         // ============================
         ElevatedCard {
             Row(
