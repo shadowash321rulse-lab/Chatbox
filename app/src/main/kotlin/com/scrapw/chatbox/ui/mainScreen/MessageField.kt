@@ -3,6 +3,7 @@ package com.scrapw.chatbox.ui.mainScreen
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
@@ -27,23 +28,52 @@ fun MessageField(
     val context = LocalContext.current
     var tab by remember { mutableStateOf(TabPage.Cycle) }
 
+    // Root: content scrolls, bottom bar stays visible
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        ElevatedCard {
-            Column(Modifier.fillMaxWidth()) {
+        // ==========================
+        // Top card (tabs + content)
+        // ==========================
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = true) // <-- gives room; prevents bottom bar being pushed off
+        ) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+            ) {
                 TabRow(selectedTabIndex = tab.ordinal) {
-                    Tab(selected = tab == TabPage.Cycle, onClick = { tab = TabPage.Cycle }, text = { Text("Cycle") })
-                    Tab(selected = tab == TabPage.NowPlaying, onClick = { tab = TabPage.NowPlaying }, text = { Text("Now Playing") })
-                    Tab(selected = tab == TabPage.Debug, onClick = { tab = TabPage.Debug }, text = { Text("Debug") })
+                    Tab(
+                        selected = tab == TabPage.Cycle,
+                        onClick = { tab = TabPage.Cycle },
+                        text = { Text("Cycle") }
+                    )
+                    Tab(
+                        selected = tab == TabPage.NowPlaying,
+                        onClick = { tab = TabPage.NowPlaying },
+                        text = { Text("Now Playing") }
+                    )
+                    Tab(
+                        selected = tab == TabPage.Debug,
+                        onClick = { tab = TabPage.Debug },
+                        text = { Text("Debug") }
+                    )
                 }
 
-                when (tab) {
-                    TabPage.Cycle -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Scroll only the tab content
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    when (tab) {
+                        TabPage.Cycle -> {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Enable Cycle", style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.weight(1f))
@@ -69,7 +99,9 @@ fun MessageField(
                                 TextField(
                                     value = chatboxViewModel.cycleIntervalSeconds.toString(),
                                     onValueChange = { raw ->
-                                        raw.toIntOrNull()?.let { n -> chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1) }
+                                        raw.toIntOrNull()?.let { n ->
+                                            chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1)
+                                        }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
@@ -106,10 +138,8 @@ fun MessageField(
                                 )
                             }
                         }
-                    }
 
-                    TabPage.NowPlaying -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TabPage.NowPlaying -> {
                             Text("Now Playing block (phone music)", style = MaterialTheme.typography.titleMedium)
 
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -133,11 +163,13 @@ fun MessageField(
                             TextField(
                                 value = chatboxViewModel.musicRefreshSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1) }
+                                    raw.toIntOrNull()?.let { n ->
+                                        chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
-                                placeholder = { Text("Music refresh: seconds between progress updates") }
+                                placeholder = { Text("Music refresh: seconds between updates") }
                             )
 
                             Row(
@@ -163,13 +195,13 @@ fun MessageField(
                                 }
                             }
 
-                            var debugExpanded by remember { mutableStateOf(false) }
+                            var demoExpanded by remember { mutableStateOf(false) }
                             OutlinedButton(
-                                onClick = { debugExpanded = !debugExpanded },
+                                onClick = { demoExpanded = !demoExpanded },
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text(if (debugExpanded) "Hide Demo" else "Show Demo") }
+                            ) { Text(if (demoExpanded) "Hide Demo" else "Show Demo") }
 
-                            if (debugExpanded) {
+                            if (demoExpanded) {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text("Demo mode (no real music needed)")
                                     Spacer(Modifier.weight(1f))
@@ -199,28 +231,23 @@ fun MessageField(
                                 ) {
                                     Icon(Icons.Filled.PauseCircleFilled, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Stop Sending")
+                                    Text("Stop")
                                 }
                             }
 
                             OutlinedButton(
                                 onClick = { chatboxViewModel.sendNowPlayingOnce() },
                                 modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Send once now (test)")
-                            }
+                            ) { Text("Send once now (test)") }
 
                             Text(
-                                "Important: For real music detection, enable Notification Access and play music in an app that shows a media notification.",
+                                "If it still says not detected: enable Notification Access, then force-close Chatbox and reopen.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
-                    }
 
-                    TabPage.Debug -> {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TabPage.Debug -> {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
-
                             Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
                             Text("Artist: ${chatboxViewModel.lastNowPlayingArtist}")
                             Text("Title: ${chatboxViewModel.lastNowPlayingTitle}")
@@ -229,7 +256,11 @@ fun MessageField(
                             Text("Last sent: ${if (lastSent == 0L) "never" else "$lastSent"}")
 
                             Text(
-                                "If detected=false:\n• Go to Notification Access and enable Chatbox\n• Restart Chatbox\n• Toggle access OFF then ON\n• Make sure your music app shows a media notification",
+                                "If detected=false:\n" +
+                                    "• Enable Notification Access\n" +
+                                    "• Force close Chatbox and reopen\n" +
+                                    "• Make sure Spotify shows a media notification\n" +
+                                    "• Disable battery optimization for Chatbox",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -238,8 +269,14 @@ fun MessageField(
             }
         }
 
-        // Manual input row (always visible)
-        ElevatedCard {
+        Spacer(Modifier.height(10.dp))
+
+        // ==========================
+        // Bottom bar (ALWAYS visible)
+        // ==========================
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -267,3 +304,4 @@ fun MessageField(
         }
     }
 }
+
