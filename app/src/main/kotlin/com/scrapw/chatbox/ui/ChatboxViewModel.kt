@@ -14,11 +14,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.scrapw.chatbox.ChatboxApplication
+import com.scrapw.chatbox.NowPlayingState
 import com.scrapw.chatbox.UpdateInfo
 import com.scrapw.chatbox.UpdateStatus
 import com.scrapw.chatbox.checkUpdate
 import com.scrapw.chatbox.data.UserPreferencesRepository
-import com.scrapw.chatbox.nowplaying.NowPlayingState
 import com.scrapw.chatbox.osc.ChatboxOSC
 import com.scrapw.chatbox.ui.mainScreen.ConversationUiState
 import com.scrapw.chatbox.ui.mainScreen.Message
@@ -96,7 +96,9 @@ class ChatboxViewModel(
 
     val messageText = mutableStateOf(TextFieldValue(""))
 
-    fun onIpAddressChange(ip: String) { userInputIpState.value = ip }
+    fun onIpAddressChange(ip: String) {
+        userInputIpState.value = ip
+    }
 
     fun ipAddressApply(address: String) {
         CoroutineScope(Dispatchers.IO).launch {
@@ -144,7 +146,6 @@ class ChatboxViewModel(
     fun stashMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         osc.typing = false
-
         conversationUiState.addMessage(
             Message(messageText.value.text, true, Instant.now())
         )
@@ -163,7 +164,7 @@ class ChatboxViewModel(
     fun onSendImmediatelyChanged(isChecked: Boolean) =
         viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(isChecked) }
 
-    // Update checker (keep)
+    // Update checker
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
     fun checkUpdate() {
@@ -204,23 +205,20 @@ class ChatboxViewModel(
         cycleJob = null
     }
 
-    private fun clampVrchat(text: String): String {
-        val t = text.trimEnd()
-        return if (t.length <= VRCHAT_LIMIT) t else t.take(VRCHAT_LIMIT)
-    }
+    private fun clampVrchat(text: String): String =
+        if (text.length <= VRCHAT_LIMIT) text else text.take(VRCHAT_LIMIT)
 
     // ============================
-    // Now Playing (kept names "spotify*" for your UI)
+    // Now Playing (kept "spotify*" naming)
     // ============================
     var spotifyEnabled by mutableStateOf(false)
-    var spotifyPreset by mutableStateOf(1) // 1..5
+    var spotifyPreset by mutableStateOf(1)   // 1..5
     var spotifyDemoEnabled by mutableStateOf(false)
 
-    // for UI button (opens notification access settings)
     fun notificationAccessIntent(): Intent =
         Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    data class NowPlayingUi(
+    private data class NowPlayingUi(
         val isPlaying: Boolean,
         val artist: String,
         val title: String,
@@ -231,7 +229,7 @@ class ChatboxViewModel(
     private var nowPlayingUi by mutableStateOf(NowPlayingUi(false, "", "", 0L, 1L))
 
     init {
-        // load prefs
+        // Load persisted values
         viewModelScope.launch {
             cycleEnabled = userPreferencesRepository.cycleEnabled.first()
             cycleMessages = userPreferencesRepository.cycleMessages.first()
@@ -242,17 +240,16 @@ class ChatboxViewModel(
             spotifyDemoEnabled = userPreferencesRepository.spotifyDemo.first()
         }
 
-        // persist cycle
+        // Persist on change
         viewModelScope.launch { snapshotFlow { cycleEnabled }.collect { userPreferencesRepository.saveCycleEnabled(it) } }
         viewModelScope.launch { snapshotFlow { cycleMessages }.collect { userPreferencesRepository.saveCycleMessages(it) } }
         viewModelScope.launch { snapshotFlow { cycleIntervalSeconds }.collect { userPreferencesRepository.saveCycleInterval(it) } }
 
-        // persist now playing toggles
         viewModelScope.launch { snapshotFlow { spotifyEnabled }.collect { userPreferencesRepository.saveSpotifyEnabled(it) } }
         viewModelScope.launch { snapshotFlow { spotifyPreset }.collect { userPreferencesRepository.saveSpotifyPreset(it) } }
         viewModelScope.launch { snapshotFlow { spotifyDemoEnabled }.collect { userPreferencesRepository.saveSpotifyDemo(it) } }
 
-        // collect system now playing
+        // Collect system Now Playing
         viewModelScope.launch {
             NowPlayingState.state.collect { np ->
                 nowPlayingUi = NowPlayingUi(
@@ -270,20 +267,14 @@ class ChatboxViewModel(
         spotifyPreset = preset.coerceIn(1, 5)
     }
 
-    fun setSpotifyEnabledFlag(enabled: Boolean) {
-        spotifyEnabled = enabled
-    }
-
-    fun setSpotifyDemoFlag(enabled: Boolean) {
-        spotifyDemoEnabled = enabled
-    }
+    fun setSpotifyEnabledFlag(enabled: Boolean) { spotifyEnabled = enabled }
+    fun setSpotifyDemoFlag(enabled: Boolean) { spotifyDemoEnabled = enabled }
 
     // ============================
-    // Compose outgoing (cycle + now playing underneath)
+    // Outgoing message builder (cycle + Now Playing underneath)
     // ============================
     private fun buildOutgoingCycleMessage(cycleLine: String): String {
-        val cleanedCycle = cycleLine.trim()
-        val base = cleanedCycle.take(VRCHAT_LIMIT).trimEnd()
+        val base = cycleLine.trim().let { if (it.length <= VRCHAT_LIMIT) it else it.take(VRCHAT_LIMIT) }
 
         val remaining = (VRCHAT_LIMIT - base.length - 1).coerceAtLeast(0)
         val npBlock = buildNowPlayingBlockWithBudget(remaining).trim()
@@ -298,19 +289,17 @@ class ChatboxViewModel(
     }
 
     private fun buildNowPlayingBlockWithBudget(budget: Int): String {
-        if (!spotifyEnabled) return ""
-        if (budget <= 0) return ""
+        if (!spotifyEnabled || budget <= 0) return ""
 
-        // demo mode
         val ui = if (spotifyDemoEnabled) {
-            val duration = 80_000L
+            val duration = 200_000L
             val pos = (System.currentTimeMillis() % duration).coerceIn(0L, duration)
             NowPlayingUi(true, "Demo Artist", "Demo Song", pos, duration)
         } else {
             nowPlayingUi
         }
 
-        if (ui.title.isBlank()) return "" // nothing playing / no metadata
+        if (ui.title.isBlank()) return ""
 
         val progressLine = formatProgressLine(ui.positionMs, ui.durationMs, spotifyPreset)
         if (progressLine.length > budget) return ""
@@ -325,13 +314,16 @@ class ChatboxViewModel(
         }
     }
 
-    // artist shown unless it overflows, then drop artist first
+    // show artist unless it overflows, then drop artist first
     private fun clampTitleToBudget(artist: String, title: String, budget: Int): String {
         if (budget <= 0) return ""
-        val full = "${artist.trim()} — ${title.trim()}".trim()
-        if (full.length <= budget && full != "—") return full
-        if (title.length <= budget) return title
-        return ellipsize(title, budget)
+        val a = artist.trim()
+        val t = title.trim()
+        val full = if (a.isNotBlank()) "$a — $t" else t
+
+        if (full.length <= budget) return full
+        if (t.length <= budget) return t
+        return ellipsize(t, budget)
     }
 
     private fun ellipsize(text: String, maxLen: Int): String {
@@ -349,7 +341,7 @@ class ChatboxViewModel(
         val prog = progressMs.coerceIn(0L, dur)
         val left = formatTime(prog)
         val right = formatTime(dur)
-        val barWidth = 8 // same as preset 1
+        val barWidth = 8 // uniform short width to prevent overflow
 
         return when (preset.coerceIn(1, 5)) {
             1 -> {
@@ -422,3 +414,4 @@ data class MessengerUiState(
     val isTypingIndicator: Boolean = true,
     val isSendImmediately: Boolean = true
 )
+
