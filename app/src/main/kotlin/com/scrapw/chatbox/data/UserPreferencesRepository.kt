@@ -2,22 +2,26 @@ package com.scrapw.chatbox.data
 
 import android.util.Log
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.*
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
 class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
-
     private companion object {
         const val TAG = "UserPreferencesRepo"
+        const val ERROR_READ = "Error reading preferences."
 
-        // Network
         val IP_ADDRESS = stringPreferencesKey("ip_address")
         val PORT = intPreferencesKey("port")
 
-        // Message behavior
         val MSG_REALTIME = booleanPreferencesKey("msg_realtime")
         val MSG_TRIGGER_SFX = booleanPreferencesKey("msg_trigger_sfx")
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
@@ -28,124 +32,102 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval")
 
-        // AFK
-        val AFK_ENABLED = booleanPreferencesKey("afk_enabled")
-        val AFK_MESSAGE = stringPreferencesKey("afk_message")
-
-        // Presets
-        val SELECTED_PRESET = stringPreferencesKey("selected_preset")
-        val PRESETS_JSON = stringPreferencesKey("presets_json")
-
-        // Spotify UI prefs
+        // Spotify prefs + tokens
         val SPOTIFY_ENABLED = booleanPreferencesKey("spotify_enabled")
+        val SPOTIFY_DEMO = booleanPreferencesKey("spotify_demo")
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
         val SPOTIFY_CLIENT_ID = stringPreferencesKey("spotify_client_id")
 
-        // Spotify OAuth PKCE temp
-        val SPOTIFY_STATE = stringPreferencesKey("spotify_state")
-        val SPOTIFY_CODE_VERIFIER = stringPreferencesKey("spotify_code_verifier")
-
-        // Spotify tokens
         val SPOTIFY_ACCESS_TOKEN = stringPreferencesKey("spotify_access_token")
         val SPOTIFY_REFRESH_TOKEN = stringPreferencesKey("spotify_refresh_token")
         val SPOTIFY_EXPIRES_AT = longPreferencesKey("spotify_expires_at_epoch_sec")
+        val SPOTIFY_CODE_VERIFIER = stringPreferencesKey("spotify_code_verifier")
+        val SPOTIFY_STATE = stringPreferencesKey("spotify_state")
     }
 
-    // ---------- generic helpers ----------
-    private fun <T> get(key: Preferences.Key<T>, default: T): Flow<T> =
-        dataStore.data
-            .catch { e ->
-                if (e is IOException) {
-                    Log.e(TAG, "Error reading preferences", e)
-                    emit(emptyPreferences())
-                } else {
-                    throw e
-                }
-            }
-            .map { it[key] ?: default }
-
-    private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
-        dataStore.edit { it[key] = value }
-    }
-
-    // ---------- Network ----------
     val ipAddress = get(IP_ADDRESS, "127.0.0.1")
     suspend fun saveIpAddress(value: String) = save(IP_ADDRESS, value)
 
     val port = get(PORT, 9000)
     suspend fun savePort(value: Int) = save(PORT, value)
 
-    // ---------- Message options ----------
     val isRealtimeMsg = get(MSG_REALTIME, false)
-    suspend fun saveIsRealtimeMsg(v: Boolean) = save(MSG_REALTIME, v)
+    suspend fun saveIsRealtimeMsg(value: Boolean) = save(MSG_REALTIME, value)
 
     val isTriggerSfx = get(MSG_TRIGGER_SFX, true)
-    suspend fun saveIsTriggerSFX(v: Boolean) = save(MSG_TRIGGER_SFX, v)
+    suspend fun saveIsTriggerSFX(value: Boolean) = save(MSG_TRIGGER_SFX, value)
 
     val isTypingIndicator = get(MSG_TYPING_INDICATOR, true)
-    suspend fun saveTypingIndicator(v: Boolean) = save(MSG_TYPING_INDICATOR, v)
+    suspend fun saveTypingIndicator(value: Boolean) = save(MSG_TYPING_INDICATOR, value)
 
     val isSendImmediately = get(MSG_SEND_DIRECTLY, true)
-    suspend fun saveIsSendImmediately(v: Boolean) = save(MSG_SEND_DIRECTLY, v)
+    suspend fun saveIsSendImmediately(value: Boolean) = save(MSG_SEND_DIRECTLY, value)
 
-    // ---------- Cycle ----------
+    // Cycle
     val cycleEnabled = get(CYCLE_ENABLED, false)
-    suspend fun saveCycleEnabled(v: Boolean) = save(CYCLE_ENABLED, v)
+    suspend fun saveCycleEnabled(value: Boolean) = save(CYCLE_ENABLED, value)
 
     val cycleMessages = get(CYCLE_MESSAGES, "")
-    suspend fun saveCycleMessages(v: String) = save(CYCLE_MESSAGES, v)
+    suspend fun saveCycleMessages(value: String) = save(CYCLE_MESSAGES, value)
 
     val cycleInterval = get(CYCLE_INTERVAL, 3)
-    suspend fun saveCycleInterval(v: Int) = save(CYCLE_INTERVAL, v)
+    suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
-    // ---------- AFK ----------
-    val afkEnabled = get(AFK_ENABLED, false)
-    suspend fun saveAfkEnabled(v: Boolean) = save(AFK_ENABLED, v)
-
-    val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
-    suspend fun saveAfkMessage(v: String) = save(AFK_MESSAGE, v)
-
-    // ---------- Presets ----------
-    val selectedPreset = get(SELECTED_PRESET, "")
-    suspend fun saveSelectedPreset(v: String) = save(SELECTED_PRESET, v)
-
-    val presetsJson = get(PRESETS_JSON, "")
-    suspend fun savePresetsJson(v: String) = save(PRESETS_JSON, v)
-
-    // ---------- Spotify UI prefs ----------
+    // Spotify
     val spotifyEnabled = get(SPOTIFY_ENABLED, false)
-    suspend fun saveSpotifyEnabled(v: Boolean) = save(SPOTIFY_ENABLED, v)
+    suspend fun saveSpotifyEnabled(value: Boolean) = save(SPOTIFY_ENABLED, value)
+
+    val spotifyDemo = get(SPOTIFY_DEMO, false)
+    suspend fun saveSpotifyDemo(value: Boolean) = save(SPOTIFY_DEMO, value)
 
     val spotifyPreset = get(SPOTIFY_PRESET, 1)
-    suspend fun saveSpotifyPreset(v: Int) = save(SPOTIFY_PRESET, v)
+    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
 
     val spotifyClientId = get(SPOTIFY_CLIENT_ID, "")
-    suspend fun saveSpotifyClientId(v: String) = save(SPOTIFY_CLIENT_ID, v)
+    suspend fun saveSpotifyClientId(value: String) = save(SPOTIFY_CLIENT_ID, value)
 
-    // ---------- Spotify PKCE ----------
-    val spotifyState = get(SPOTIFY_STATE, "")
-    suspend fun saveSpotifyState(v: String) = save(SPOTIFY_STATE, v)
-
-    val spotifyCodeVerifier = get(SPOTIFY_CODE_VERIFIER, "")
-    suspend fun saveSpotifyCodeVerifier(v: String) = save(SPOTIFY_CODE_VERIFIER, v)
-
-    // ---------- Spotify tokens ----------
+    // Tokens
     val spotifyAccessToken = get(SPOTIFY_ACCESS_TOKEN, "")
-    suspend fun saveSpotifyAccessToken(v: String) = save(SPOTIFY_ACCESS_TOKEN, v)
+    suspend fun saveSpotifyAccessToken(value: String) = save(SPOTIFY_ACCESS_TOKEN, value)
 
     val spotifyRefreshToken = get(SPOTIFY_REFRESH_TOKEN, "")
-    suspend fun saveSpotifyRefreshToken(v: String) = save(SPOTIFY_REFRESH_TOKEN, v)
+    suspend fun saveSpotifyRefreshToken(value: String) = save(SPOTIFY_REFRESH_TOKEN, value)
 
     val spotifyExpiresAtEpochSec = get(SPOTIFY_EXPIRES_AT, 0L)
-    suspend fun saveSpotifyExpiresAtEpochSec(v: Long) = save(SPOTIFY_EXPIRES_AT, v)
+    suspend fun saveSpotifyExpiresAtEpochSec(value: Long) = save(SPOTIFY_EXPIRES_AT, value)
+
+    val spotifyCodeVerifier = get(SPOTIFY_CODE_VERIFIER, "")
+    suspend fun saveSpotifyCodeVerifier(value: String) = save(SPOTIFY_CODE_VERIFIER, value)
+
+    val spotifyState = get(SPOTIFY_STATE, "")
+    suspend fun saveSpotifyState(value: String) = save(SPOTIFY_STATE, value)
 
     suspend fun clearSpotifyTokens() {
-        dataStore.edit {
-            it.remove(SPOTIFY_ACCESS_TOKEN)
-            it.remove(SPOTIFY_REFRESH_TOKEN)
-            it.remove(SPOTIFY_EXPIRES_AT)
-            it.remove(SPOTIFY_STATE)
-            it.remove(SPOTIFY_CODE_VERIFIER)
+        dataStore.edit { prefs ->
+            prefs.remove(SPOTIFY_ACCESS_TOKEN)
+            prefs.remove(SPOTIFY_REFRESH_TOKEN)
+            prefs.remove(SPOTIFY_EXPIRES_AT)
+            prefs.remove(SPOTIFY_CODE_VERIFIER)
+            prefs.remove(SPOTIFY_STATE)
+        }
+    }
+
+    private fun <T> get(key: Preferences.Key<T>, defaultValue: T): Flow<T> {
+        return dataStore.data
+            .catch {
+                if (it is IOException) {
+                    Log.e(TAG, ERROR_READ, it)
+                    emit(emptyPreferences())
+                } else {
+                    throw it
+                }
+            }
+            .map { preferences -> preferences[key] ?: defaultValue }
+    }
+
+    private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
+        dataStore.edit { preferences ->
+            preferences[key] = value
         }
     }
 }
