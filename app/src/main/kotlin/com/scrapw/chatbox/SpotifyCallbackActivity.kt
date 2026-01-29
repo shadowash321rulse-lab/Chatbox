@@ -1,24 +1,33 @@
 package com.scrapw.chatbox.spotify
 
-import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import androidx.activity.ComponentActivity
 import com.scrapw.chatbox.ChatboxApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
-class SpotifyCallbackActivity : Activity() {
+/**
+ * Receives: chatbox://spotify-callback?code=...&state=...
+ * Exchanges code -> tokens and stores them in DataStore.
+ * Then returns user to MainActivity.
+ */
+class SpotifyCallbackActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val uri: Uri? = intent?.data
         if (uri != null) {
             val repo = (application as ChatboxApplication).userPreferencesRepository
-            // Kick token exchange off in background
-            // (no UI, so just start and finish)
-            SpotifyCallbackWorker.start(this, uri.toString())
+            CoroutineScope(Dispatchers.IO).launch {
+                SpotifyTokenExchange.exchangeAndStore(repo, uri)
+            }
         }
 
-        // Return to app
+        // Return to the app
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         launch?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         if (launch != null) startActivity(launch)
@@ -26,4 +35,3 @@ class SpotifyCallbackActivity : Activity() {
         finish()
     }
 }
-
