@@ -1,156 +1,184 @@
 package com.scrapw.chatbox.ui.mainScreen
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.PauseCircleFilled
+import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import com.scrapw.chatbox.R
-import com.scrapw.chatbox.data.SettingsStates
 import com.scrapw.chatbox.ui.ChatboxViewModel
-import com.scrapw.chatbox.ui.common.HapticConstants
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-
+import kotlin.math.roundToInt
 
 @Composable
 fun MessageField(
     chatboxViewModel: ChatboxViewModel,
     modifier: Modifier = Modifier
 ) {
-    Crossfade(
-        targetState = chatboxViewModel.isAddressResolvable.value, label = "LockIpFieldCrossfade"
-    ) { resolvable ->
-        Row(
-            modifier = modifier
-                .height(72.dp)
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
 
-            if (resolvable) {
-                TextField(
-                    value = chatboxViewModel.messageText.value,
-                    onValueChange = {
-                        chatboxViewModel.onMessageTextChange(it)
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(8.dp)),
-                    singleLine = true,
-                    placeholder = { Text(stringResource(R.string.write_a_message)) },
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            chatboxViewModel.ipAddressLocked = true
-                            chatboxViewModel.sendMessage()
+        // ============================
+        // Cycle controls
+        // ============================
+        ElevatedCard {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Cycle messages", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.weight(1f))
+                    Switch(
+                        checked = chatboxViewModel.cycleEnabled,
+                        onCheckedChange = {
+                            chatboxViewModel.cycleEnabled = it
+                            if (!it) chatboxViewModel.stopCycle()
                         }
                     )
-                )
-            } else {
-                TextField(
-                    value = stringResource(R.string.invalid_ip_address),
-                    onValueChange = {},
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(8.dp)),
-                    textStyle = TextStyle.Default.copy(
-                        fontStyle = FontStyle.Italic
-                    ),
-//                    colors = TextFieldDefaults.colors(
-//                        disabledTextColor = MaterialTheme.colorScheme.error
-//                    ),
-                    enabled = false
-                )
-            }
-
-
-            val view = LocalView.current
-            val buttonHapticState = SettingsStates.buttonHapticState()
-
-
-            val onSendClick = {
-                chatboxViewModel.ipAddressLocked = true
-                chatboxViewModel.sendMessage()
-                if (buttonHapticState.value) {
-                    view.performHapticFeedback(HapticConstants.send)
                 }
-            }
 
-            val onSendLongClick = {
-                chatboxViewModel.ipAddressLocked = true
-                chatboxViewModel.stashMessage()
-                if (buttonHapticState.value) {
-                    view.performHapticFeedback(HapticConstants.send)
-                }
-            }
+                if (chatboxViewModel.cycleEnabled) {
+                    TextField(
+                        value = chatboxViewModel.cycleMessages,
+                        onValueChange = { chatboxViewModel.cycleMessages = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 6,
+                        placeholder = { Text("One message per line. Spotify always appears under cycle automatically.") }
+                    )
 
+                    TextField(
+                        value = chatboxViewModel.cycleIntervalSeconds.toString(),
+                        onValueChange = { raw ->
+                            raw.toIntOrNull()?.let { n ->
+                                chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("Seconds between messages (min 1)") }
+                    )
 
-            val interactionSource = remember { MutableInteractionSource() }
-            val viewConfiguration = LocalViewConfiguration.current
-
-            Button(
-                onClick = {},
-                modifier = Modifier.fillMaxHeight(),
-                interactionSource = interactionSource,
-                enabled = resolvable
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Default.Send,
-                    contentDescription = stringResource(R.string.send),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            LaunchedEffect(interactionSource) {
-                var isLongClick = false
-
-                interactionSource.interactions.collectLatest { interaction ->
-                    when (interaction) {
-                        is PressInteraction.Press -> {
-                            isLongClick = false
-                            delay(viewConfiguration.longPressTimeoutMillis)
-                            isLongClick = true
-                            onSendLongClick()
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { chatboxViewModel.startCycle() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.PlayCircleFilled, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Start Cycle")
                         }
 
-                        is PressInteraction.Release -> {
-                            if (!isLongClick) {
-                                onSendClick()
-                            }
+                        OutlinedButton(
+                            onClick = { chatboxViewModel.stopCycle() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.PauseCircleFilled, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Stop Cycle")
                         }
                     }
+                }
+            }
+        }
+
+        // ============================
+        // Spotify output toggles (VRChat test)
+        // ============================
+        ElevatedCard {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Spotify block (VRChat)", style = MaterialTheme.typography.titleMedium)
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Enable Spotify block")
+                    Spacer(Modifier.weight(1f))
+                    Switch(
+                        checked = chatboxViewModel.spotifyEnabled,
+                        onCheckedChange = { chatboxViewModel.setSpotifyEnabled(it) }
+                    )
+                }
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Demo mode (shows without Spotify)")
+                    Spacer(Modifier.weight(1f))
+                    Switch(
+                        checked = chatboxViewModel.spotifyDemoEnabled,
+                        onCheckedChange = { chatboxViewModel.setSpotifyDemoEnabled(it) }
+                    )
+                }
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Preset", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(4.dp))
+                    (1..5).forEach { p ->
+                        val selected = chatboxViewModel.spotifyPreset == p
+                        Button(
+                            onClick = { chatboxViewModel.updateSpotifyPreset(p) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            colors = if (selected) ButtonDefaults.buttonColors()
+                            else ButtonDefaults.outlinedButtonColors()
+                        ) { Text("$p") }
+                    }
+                }
+
+                Text("This card only proves the VRChat output works. Real Spotify auth comes next.")
+            }
+        }
+
+        // ============================
+        // Message input + buttons
+        // ============================
+        ElevatedCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextField(
+                    value = chatboxViewModel.messageText.value,
+                    onValueChange = { chatboxViewModel.onMessageTextChange(it) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("Write a message") }
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                IconButton(onClick = { chatboxViewModel.stashMessage() }) {
+                    Icon(Icons.Filled.BookmarkAdd, contentDescription = "Quick message")
+                }
+
+                Button(onClick = { chatboxViewModel.sendMessage() }) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         }
