@@ -1,8 +1,13 @@
 package com.scrapw.chatbox.ui.mainScreen
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.PauseCircleFilled
+import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -10,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @Composable
 fun MessageField(
@@ -53,7 +59,7 @@ fun MessageField(
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                         maxLines = 6,
-                        placeholder = { Text("One message per line. Use {SPOTIFY} to insert Spotify block.") }
+                        placeholder = { Text("One message per line. Spotify always shows underneath automatically.") }
                     )
 
                     TextField(
@@ -67,23 +73,47 @@ fun MessageField(
                         singleLine = true,
                         placeholder = { Text("Seconds between messages (min 1)") }
                     )
+
+                    // ✅ Dedicated cycle start/stop buttons
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { chatboxViewModel.startCycle() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.PlayCircleFilled, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Start Cycle")
+                        }
+
+                        OutlinedButton(
+                            onClick = { chatboxViewModel.stopCycle() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.PauseCircleFilled, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Stop Cycle")
+                        }
+                    }
                 }
             }
         }
 
         // ============================
-        // Spotify preset tester (NO SPOTIFY REQUIRED)
+        // Spotify preset tester (preview)
         // ============================
         ElevatedCard {
             Column(
                 Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Spotify preset preview (no Spotify needed)", style = MaterialTheme.typography.titleMedium)
+                Text("Spotify preset preview", style = MaterialTheme.typography.titleMedium)
 
-                // Local demo playback that moves
                 var previewEnabled by remember { mutableStateOf(true) }
-                var demoProgressSec by remember { mutableIntStateOf(58) } // default example 0:58
+                var demoProgressSec by remember { mutableIntStateOf(0) }
                 val demoDurationSec = 80 // 1:20
                 val tickMs = 800L
 
@@ -100,68 +130,45 @@ fun MessageField(
                 ) {
                     Text("Preview mode")
                     Spacer(Modifier.weight(1f))
-                    Switch(
-                        checked = previewEnabled,
-                        onCheckedChange = { previewEnabled = it }
-                    )
+                    Switch(checked = previewEnabled, onCheckedChange = { previewEnabled = it })
                 }
 
-                // Preset selector 1..5
+                // ✅ 5 buttons always accessible
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Preset")
-                    Spacer(Modifier.weight(1f))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        (1..5).forEach { p ->
-                            val selected = chatboxViewModel.spotifyPreset == p
-                            Button(
-                                onClick = { chatboxViewModel.updateSpotifyPreset(p) },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                colors = if (selected) ButtonDefaults.buttonColors()
-                                else ButtonDefaults.outlinedButtonColors()
-                            ) { Text("$p") }
-                        }
+                    Text("Preset", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(4.dp))
+                    (1..5).forEach { p ->
+                        val selected = chatboxViewModel.spotifyPreset == p
+                        Button(
+                            onClick = { chatboxViewModel.updateSpotifyPreset(p) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            colors = if (selected) ButtonDefaults.buttonColors()
+                            else ButtonDefaults.outlinedButtonColors()
+                        ) { Text("$p") }
                     }
                 }
 
-                // Show ALL 5 examples so you can verify they exist
-                val p = (demoProgressSec * 1000L)
-                val d = (demoDurationSec * 1000L)
+                val pMs = demoProgressSec * 1000L
+                val dMs = demoDurationSec * 1000L
 
                 Text("All presets (moving marker):", style = MaterialTheme.typography.labelMedium)
 
-                PresetLine(title = "1) Love", line = formatPresetLine(1, p, d))
-                PresetLine(title = "2) Minimal", line = formatPresetLine(2, p, d))
-                PresetLine(title = "3) Crystal", line = formatPresetLine(3, p, d))
-                PresetLine(title = "4) Soundwave", line = formatPresetLine(4, p, d))
-                PresetLine(title = "5) Geometry", line = formatPresetLine(5, p, d))
-
-                Divider()
-
-                // What would be inserted as the Spotify block (once Spotify is wired)
-                Text("Selected preset output:", style = MaterialTheme.typography.labelMedium)
-
-                val selectedLine = formatPresetLine(chatboxViewModel.spotifyPreset, p, d)
-                // Title line shows artist unless overflow (we emulate that rule)
-                val title = clampTitle("Artist Name", "Song Title Example", maxLen = 44) // just for preview readability
-
-                Text(
-                    "$title\n$selectedLine",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Text(
-                    "Note: VRChat output won’t show until Spotify is wired OR you cycle-send preview text manually.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                PresetLine("1) Love", formatPresetLine(1, pMs, dMs))
+                PresetLine("2) Minimal", formatPresetLine(2, pMs, dMs))
+                PresetLine("3) Crystal", formatPresetLine(3, pMs, dMs))
+                PresetLine("4) Soundwave", formatPresetLine(4, pMs, dMs))
+                PresetLine("5) Geometry", formatPresetLine(5, pMs, dMs))
             }
         }
 
         // ============================
-        // Message send row
+        // Message input + buttons
         // ============================
         ElevatedCard {
             Row(
@@ -180,16 +187,12 @@ fun MessageField(
 
                 Spacer(Modifier.width(10.dp))
 
-                Button(
-                    onClick = {
-                        if (chatboxViewModel.cycleEnabled) {
-                            chatboxViewModel.startCycle()
-                        } else {
-                            chatboxViewModel.sendMessage()
-                        }
-                    }
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+                IconButton(onClick = { chatboxViewModel.stashMessage() }) {
+                    Icon(Icons.Filled.BookmarkAdd, contentDescription = "Quick message")
+                }
+
+                Button(onClick = { chatboxViewModel.sendMessage() }) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         }
@@ -199,19 +202,11 @@ fun MessageField(
 @Composable
 private fun PresetLine(title: String, line: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, modifier = Modifier.width(95.dp), style = MaterialTheme.typography.bodySmall)
+        Text(title, modifier = Modifier.width(110.dp), style = MaterialTheme.typography.bodySmall)
         Text(line, style = MaterialTheme.typography.bodySmall)
     }
 }
 
-/**
- * EXACTLY your 5 presets, with moving marker.
- * 1) ♡━━━◉━━━━♡ 0:58 / 1:20
- * 2) ━━◉────────── 0:58/1:20
- * 3) ⟡⟡⟡◉⟡⟡⟡⟡⟡ 0:58 / 1:20
- * 4) ▁▂▃▄▅●▅▄▃▂▁ 0:58 / 1:20
- * 5) ▣▣▣◉▢▢▢▢▢▢▢ 0:58 / 1:20
- */
 private fun formatPresetLine(preset: Int, progressMs: Long, durationMs: Long): String {
     val dur = durationMs.coerceAtLeast(1L)
     val prog = progressMs.coerceIn(0L, dur)
@@ -245,7 +240,7 @@ private fun formatPresetLine(preset: Int, progressMs: Long, durationMs: Long): S
 
 private fun movingBar(width: Int, progress: Float, filled: String, empty: String, marker: String): String {
     val w = width.coerceAtLeast(2)
-    val idx = ((progress.coerceIn(0f, 1f)) * (w - 1)).toInt()
+    val idx = ((progress.coerceIn(0f, 1f)) * (w - 1)).roundToInt()
     val sb = StringBuilder()
     for (i in 0 until w) {
         sb.append(
@@ -261,7 +256,7 @@ private fun movingBar(width: Int, progress: Float, filled: String, empty: String
 
 private fun movingWave(progress: Float): String {
     val wave = listOf("▁", "▂", "▃", "▄", "▅", "▅", "▄", "▃", "▂", "▁", "▁")
-    val idx = ((progress.coerceIn(0f, 1f)) * (wave.size - 1)).toInt()
+    val idx = ((progress.coerceIn(0f, 1f)) * (wave.size - 1)).roundToInt()
     val sb = StringBuilder()
     for (i in wave.indices) sb.append(if (i == idx) "●" else wave[i])
     return sb.toString()
@@ -274,12 +269,3 @@ private fun formatTime(ms: Long): String {
     return if (s < 10) "${m}:0${s}" else "${m}:${s}"
 }
 
-private fun clampTitle(artist: String, track: String, maxLen: Int): String {
-    val full = "$artist — $track"
-    if (full.length <= maxLen) return full
-    // your rule: remove artist if overflow
-    if (track.length <= maxLen) return track
-    // ellipsize track
-    if (maxLen <= 1) return "…"
-    return track.take(maxLen - 1) + "…"
-}
