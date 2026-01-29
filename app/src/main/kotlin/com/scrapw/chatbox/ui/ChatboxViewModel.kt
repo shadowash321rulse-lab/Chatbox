@@ -21,22 +21,8 @@ import com.scrapw.chatbox.data.UserPreferencesRepository
 import com.scrapw.chatbox.osc.ChatboxOSC
 import com.scrapw.chatbox.ui.mainScreen.ConversationUiState
 import com.scrapw.chatbox.ui.mainScreen.Message
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flattenMerge
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import java.time.Instant
 
 class ChatboxViewModel(
@@ -50,90 +36,68 @@ class ChatboxViewModel(
             initializer {
                 val application = (this[APPLICATION_KEY] as ChatboxApplication)
                 instance = ChatboxViewModel(application.userPreferencesRepository)
-                Log.d("ChatboxViewModel", "Init")
                 instance
             }
         }
 
         @MainThread
-        fun getInstance(): ChatboxViewModel {
-            if (!isInstanceInitialized()) {
-                throw Exception("ChatboxViewModel is not initialized!")
-            }
-            Log.d("ChatboxViewModel", "getInstance()")
-            return instance
-        }
-
+        fun getInstance(): ChatboxViewModel = instance
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
     }
 
     override fun onCleared() {
-        Log.d("ChatboxViewModel", "onCleared()")
         stopCycle()
         super.onCleared()
     }
 
     val conversationUiState = ConversationUiState()
 
-    private val storedIpState: StateFlow<String> =
-        userPreferencesRepository.ipAddress
-            .map { it }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = ""
-            )
+    private val storedIpState =
+        userPreferencesRepository.ipAddress.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            ""
+        )
 
     private val userInputIpState = MutableStateFlow("")
     var ipAddressLocked by mutableStateOf(false)
 
-    private val ipFlow = listOf(storedIpState, userInputIpState).asFlow().flattenMerge()
+    private val ipFlow = merge(storedIpState, userInputIpState)
 
-    val messengerUiState: StateFlow<MessengerUiState> = combine(
+    val messengerUiState = combine(
         ipFlow,
         userPreferencesRepository.isRealtimeMsg,
         userPreferencesRepository.isTriggerSfx,
         userPreferencesRepository.isTypingIndicator,
         userPreferencesRepository.isSendImmediately
-    ) { ipAddress, isRealtimeMsg, isTriggerSFX, isTypingIndicator, isSendImmediately ->
-        MessengerUiState(
-            ipAddress = ipAddress,
-            isRealtimeMsg = isRealtimeMsg,
-            isTriggerSFX = isTriggerSFX,
-            isTypingIndicator = isTypingIndicator,
-            isSendImmediately = isSendImmediately
-        )
+    ) { ip, r, s, t, i ->
+        MessengerUiState(ip, r, s, t, i)
     }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = MessengerUiState()
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        MessengerUiState()
     )
 
     private val remoteChatboxOSC = ChatboxOSC(
-        ipAddress = runBlocking { userPreferencesRepository.ipAddress.first() },
-        port = 9000
+        runBlocking { userPreferencesRepository.ipAddress.first() },
+        9000
     )
 
-    private val localChatboxOSC = ChatboxOSC(
-        ipAddress = "localhost",
-        port = 9000
-    )
+    private val localChatboxOSC = ChatboxOSC("localhost", 9000)
 
     val messageText = mutableStateOf(TextFieldValue(""))
+    val isAddressResolvable = mutableStateOf(true)
 
     fun onIpAddressChange(ip: String) {
         userInputIpState.value = ip
     }
 
     fun ipAddressApply(address: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            withContext(Dispatchers.IO) {
-                remoteChatboxOSC.ipAddress = address
-                isAddressResolvable.value = remoteChatboxOSC.addressResolvable
-                if (!isAddressResolvable.value) ipAddressLocked = false
-            }
+        viewModelScope.launch {
+            remoteChatboxOSC.ipAddress = address
+            isAddressResolvable.value = remoteChatboxOSC.addressResolvable
+            userPreferencesRepository.saveIpAddress(address)
         }
-        viewModelScope.launch { userPreferencesRepository.saveIpAddress(address) }
     }
 
     fun portApply(port: Int) {
@@ -141,37 +105,23 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.savePort(port) }
     }
 
-    val isAddressResolvable = mutableStateOf(true)
-
     fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
-        val osc = if (!local) remoteChatboxOSC else localChatboxOSC
-
+        val osc = if (local) localChatboxOSC else remoteChatboxOSC
         messageText.value = message
         if (messengerUiState.value.isRealtimeMsg) {
             osc.sendRealtimeMessage(message.text)
-        } else {
-            if (messengerUiState.value.isTypingIndicator) {
-                osc.typing = message.text.isNotEmpty()
-            }
         }
     }
 
-    private fun sendText(text: String, local: Boolean = false) {
-        val osc = if (!local) remoteChatboxOSC else localChatboxOSC
-
+    private fun sendText(text: String, local: Boolean) {
+        val osc = if (local) localChatboxOSC else remoteChatboxOSC
         osc.sendMessage(
             text,
             messengerUiState.value.isSendImmediately,
             messengerUiState.value.isTriggerSFX
         )
-        osc.typing = false
-
         conversationUiState.addMessage(
-            Message(
-                text,
-                false,
-                Instant.now()
-            )
+            Message(text, false, Instant.now())
         )
     }
 
@@ -181,75 +131,41 @@ class ChatboxViewModel(
     }
 
     fun stashMessage(local: Boolean = false) {
-        val osc = if (!local) remoteChatboxOSC else localChatboxOSC
-        osc.typing = false
-
         conversationUiState.addMessage(
-            Message(
-                messageText.value.text,
-                true,
-                Instant.now()
-            )
+            Message(messageText.value.text, true, Instant.now())
         )
-
         messageText.value = TextFieldValue("", TextRange.Zero)
     }
 
-    fun onRealtimeMsgChanged(isChecked: Boolean) {
-        viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(isChecked) }
-    }
+    fun onRealtimeMsgChanged(b: Boolean) =
+        viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(b) }
 
-    fun onTriggerSfxChanged(isChecked: Boolean) {
-        viewModelScope.launch { userPreferencesRepository.saveIsTriggerSFX(isChecked) }
-    }
+    fun onTriggerSfxChanged(b: Boolean) =
+        viewModelScope.launch { userPreferencesRepository.saveIsTriggerSFX(b) }
 
-    fun onTypingIndicatorChanged(isChecked: Boolean) {
-        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(isChecked) }
-    }
+    fun onTypingIndicatorChanged(b: Boolean) =
+        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(b) }
 
-    fun onSendImmediatelyChanged(isChecked: Boolean) {
-        viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(isChecked) }
-    }
+    fun onSendImmediatelyChanged(b: Boolean) =
+        viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(b) }
 
-    // ----------------------------
-    // Cycle Messages (NEW)
-    // ----------------------------
+    // ===== Cycle feature =====
     var cycleEnabled by mutableStateOf(false)
-    var cycleMessagesText by mutableStateOf("")
+    var cycleMessages by mutableStateOf("")
     var cycleIntervalSeconds by mutableStateOf(3)
-
     private var cycleJob: Job? = null
 
-    fun setCycleEnabled(enabled: Boolean) {
-        cycleEnabled = enabled
-        if (!enabled) stopCycle()
-    }
-
-    fun setCycleMessagesText(text: String) {
-        cycleMessagesText = text
-    }
-
-    fun setCycleIntervalSeconds(seconds: Int) {
-        cycleIntervalSeconds = seconds.coerceIn(1, 3600)
-    }
-
     fun startCycle(local: Boolean = false) {
-        if (!cycleEnabled) return
-
-        val messages = cycleMessagesText
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-
-        if (messages.isEmpty()) return
+        val msgs = cycleMessages.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (!cycleEnabled || msgs.isEmpty()) return
 
         cycleJob?.cancel()
         cycleJob = viewModelScope.launch {
             var i = 0
             while (cycleEnabled) {
-                sendText(messages[i], local)
-                i = (i + 1) % messages.size
-                delay(cycleIntervalSeconds.toLong() * 1000L)
+                sendText(msgs[i], local)
+                i = (i + 1) % msgs.size
+                delay(cycleIntervalSeconds * 1000L)
             }
         }
     }
@@ -258,15 +174,13 @@ class ChatboxViewModel(
         cycleJob?.cancel()
         cycleJob = null
     }
-    // ----------------------------
 
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
     fun checkUpdate() {
         if (updateChecked) return
         updateChecked = true
-
-        viewModelScope.launch(Dispatchers.Main) {
+        viewModelScope.launch {
             updateInfo = checkUpdate("ScrapW", "Chatbox")
         }
     }
