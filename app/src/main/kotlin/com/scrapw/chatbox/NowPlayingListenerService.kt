@@ -1,15 +1,29 @@
 package com.scrapw.chatbox
 
+import android.app.Notification
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import android.app.Notification
 
 class NowPlayingListenerService : NotificationListenerService() {
+
+    // Optional: only accept these apps (keeps it clean).
+    // Add/remove packages if you want.
+    private val allowedPackages = setOf(
+        "com.spotify.music",
+        "com.google.android.youtube",
+        "com.google.android.apps.youtube.music",
+        "com.apple.android.music",
+        "deezer.android.app",
+        "com.soundcloud.android",
+        "com.amazon.mp3",
+        "com.bandcamp.android"
+    )
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -24,73 +38,64 @@ class NowPlayingListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
 
-        val pkg = sbn.packageName ?: ""
+        val pkg = sbn.packageName ?: return
         val notif = sbn.notification ?: return
         val extras = notif.extras
 
-        // 1) Best path: MediaSession token -> MediaController (gives progress + duration)
+        // If you want to accept ANY media app, comment out this allowlist block.
+        if (allowedPackages.isNotEmpty() && pkg !in allowedPackages) {
+            return
+        }
+
+        // HARD FILTER: only accept real media notifications.
+        // This prevents random notifications being interpreted as "Now Playing".
         val token: MediaSession.Token? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             @Suppress("DEPRECATION")
             extras.getParcelable(Notification.EXTRA_MEDIA_SESSION)
-        } else {
-            null
+        } else null
+
+        if (token == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return
         }
 
-        if (token != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            try {
-                val controller = MediaController(this, token)
-                val metadata = controller.metadata
-                val pb = controller.playbackState
+        try {
+            val controller = MediaController(this, token)
+            val metadata = controller.metadata
+            val pb = controller.playbackState
 
-                val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
-                val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
-                val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+            val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
+            val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
+            val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
 
-                val position = pb?.position ?: 0L
-                val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
+            val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
 
-                val detected = title.isNotBlank() || artist.isNotBlank()
+            val rawPos = pb?.position ?: 0L
+            val lastUpdate = pb?.lastPositionUpdateTime ?: 0L
+            val speed = pb?.playbackSpeed ?: 1f
 
-                NowPlayingState.update(
-                    NowPlayingSnapshot(
-                        listenerConnected = true,
-                        activePackage = pkg,
-                        detected = detected,
-                        title = title,
-                        artist = artist,
-                        durationMs = duration,
-                        positionMs = position,
-                        isPlaying = isPlaying
-                    )
+            // Store a snapshot PLUS timing info so the UI can "tick" without new notifications.
+            // IMPORTANT: lastPositionUpdateTime is based on elapsedRealtime.
+            val snapshotUpdateTime = if (lastUpdate > 0L) lastUpdate else SystemClock.elapsedRealtime()
+
+            val detected = title.isNotBlank() || artist.isNotBlank()
+
+            NowPlayingState.update(
+                NowPlayingSnapshot(
+                    listenerConnected = true,
+                    activePackage = pkg,
+                    detected = detected,
+                    title = title,
+                    artist = artist,
+                    durationMs = duration,
+                    positionMs = rawPos,
+                    positionUpdateTimeMs = snapshotUpdateTime,
+                    playbackSpeed = speed,
+                    isPlaying = isPlaying
                 )
-                return
-            } catch (_: Throwable) {
-                // Fall through to extras parsing
-            }
-        }
-
-        // 2) Fallback: parse notification text fields (no reliable duration/progress)
-        val titleFallback = (extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()).orEmpty()
-        val textFallback = (extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()).orEmpty()
-
-        val detectedFallback = titleFallback.isNotBlank() || textFallback.isNotBlank()
-
-        // Heuristic: title = song, artist = text if it looks short enough.
-        val title = titleFallback
-        val artist = if (textFallback.length <= 60) textFallback else ""
-
-        NowPlayingState.update(
-            NowPlayingSnapshot(
-                listenerConnected = true,
-                activePackage = pkg,
-                detected = detectedFallback,
-                title = title,
-                artist = artist,
-                durationMs = 0L,
-                positionMs = 0L,
-                isPlaying = true // unknown; assume playing if notification is active
             )
-        )
+        } catch (_: Throwable) {
+            // If MediaController fails, do nothing (don’t fall back to non-media notifications).
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
