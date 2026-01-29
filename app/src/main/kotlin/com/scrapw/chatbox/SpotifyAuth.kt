@@ -1,10 +1,10 @@
-package com.scrapw.chatbox.spotify
+package com.scrapw.chatbox
 
-import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import com.scrapw.chatbox.data.UserPreferencesRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -14,8 +14,15 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
 
+/**
+ * NOTE:
+ * Your current Spotify implementation is handled by:
+ * - ChatboxViewModel (auth URL generation + refresh + now-playing)
+ * - spotify/SpotifyTokenExchange.kt (callback code exchange)
+ *
+ * This file is kept only so the project compiles if it exists in your repo.
+ */
 object SpotifyAuth {
-    // You will add this redirect URI in Spotify Developer Dashboard + AndroidManifest intent-filter
     const val REDIRECT_URI = "chatbox://spotify-callback"
     private const val AUTH_URL = "https://accounts.spotify.com/authorize"
     private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -25,10 +32,8 @@ object SpotifyAuth {
         "user-read-playback-state"
     )
 
-    data class AuthLaunch(val url: String)
-
-    suspend fun buildAuthUrl(repo: UserPreferencesRepository): AuthLaunch {
-        val clientId = repo.spotifyClientIdFirst()
+    suspend fun buildAuthUrl(repo: UserPreferencesRepository): String = withContext(Dispatchers.IO) {
+        val clientId = repo.spotifyClientId.first()
         require(clientId.isNotBlank()) { "Spotify Client ID is empty" }
 
         val state = randomUrlSafe(16)
@@ -39,7 +44,7 @@ object SpotifyAuth {
         repo.saveSpotifyCodeVerifier(verifier)
 
         val scopeStr = scopes.joinToString(" ")
-        val url = AUTH_URL +
+        AUTH_URL +
             "?client_id=" + enc(clientId) +
             "&response_type=code" +
             "&redirect_uri=" + enc(REDIRECT_URI) +
@@ -47,83 +52,42 @@ object SpotifyAuth {
             "&code_challenge=" + enc(challenge) +
             "&state=" + enc(state) +
             "&scope=" + enc(scopeStr)
-
-        return AuthLaunch(url)
     }
 
-    suspend fun handleRedirect(
-        context: Context,
-        repo: UserPreferencesRepository,
-        uri: Uri
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val code = uri.getQueryParameter("code") ?: error("Missing code")
-            val returnedState = uri.getQueryParameter("state") ?: error("Missing state")
+    suspend fun handleRedirect(repo: UserPreferencesRepository, uri: Uri) = withContext(Dispatchers.IO) {
+        val code = uri.getQueryParameter("code") ?: error("Missing code")
+        val returnedState = uri.getQueryParameter("state") ?: error("Missing state")
 
-            val expectedState = repo.spotifyStateFirst()
-            if (expectedState.isNotBlank() && expectedState != returnedState) {
-                error("State mismatch")
-            }
+        val expectedState = repo.spotifyState.first()
+        if (expectedState.isNotBlank() && expectedState != returnedState) error("State mismatch")
 
-            val clientId = repo.spotifyClientIdFirst()
-            val verifier = repo.spotifyCodeVerifierFirst()
-            require(clientId.isNotBlank()) { "Spotify Client ID is empty" }
-            require(verifier.isNotBlank()) { "Missing PKCE code_verifier" }
-
-            val body = form(
-                "client_id" to clientId,
-                "grant_type" to "authorization_code",
-                "code" to code,
-                "redirect_uri" to REDIRECT_URI,
-                "code_verifier" to verifier
-            )
-
-            val json = postForm(TOKEN_URL, body)
-            val accessToken = json.getString("access_token")
-            val refreshToken = json.optString("refresh_token", "")
-            val expiresIn = json.getLong("expires_in") // seconds
-
-            val expiresAt = Instant.now().epochSecond + expiresIn - 15 // small safety buffer
-            repo.saveSpotifyAccessToken(accessToken)
-            if (refreshToken.isNotBlank()) repo.saveSpotifyRefreshToken(refreshToken)
-            repo.saveSpotifyExpiresAtEpochSec(expiresAt)
-
-            // clear temporary PKCE values
-            repo.saveSpotifyCodeVerifier("")
-            repo.saveSpotifyState("")
-        }
-    }
-
-    suspend fun ensureValidAccessToken(repo: UserPreferencesRepository): String = withContext(Dispatchers.IO) {
-        val access = repo.spotifyAccessTokenFirst()
-        val refresh = repo.spotifyRefreshTokenFirst()
-        val expiresAt = repo.spotifyExpiresAtEpochSecFirst()
-        val now = Instant.now().epochSecond
-
-        if (access.isNotBlank() && expiresAt > now) return@withContext access
-        if (refresh.isBlank()) return@withContext access // may be blank if not logged in
-
-        val clientId = repo.spotifyClientIdFirst()
+        val clientId = repo.spotifyClientId.first()
+        val verifier = repo.spotifyCodeVerifier.first()
         require(clientId.isNotBlank()) { "Spotify Client ID is empty" }
+        require(verifier.isNotBlank()) { "Missing PKCE code_verifier" }
 
         val body = form(
             "client_id" to clientId,
-            "grant_type" to "refresh_token",
-            "refresh_token" to refresh
+            "grant_type" to "authorization_code",
+            "code" to code,
+            "redirect_uri" to REDIRECT_URI,
+            "code_verifier" to verifier
         )
-        val json = postForm(TOKEN_URL, body)
-        val newAccess = json.getString("access_token")
-        val expiresIn = json.getLong("expires_in")
-        val newExpiresAt = Instant.now().epochSecond + expiresIn - 15
 
-        repo.saveSpotifyAccessToken(newAccess)
-        repo.saveSpotifyExpiresAtEpochSec(newExpiresAt)
-        return@withContext newAccess
+        val json = postForm(TOKEN_URL, body)
+        val accessToken = json.getString("access_token")
+        val refreshToken = json.optString("refresh_token", "")
+        val expiresIn = json.getLong("expires_in")
+
+        val expiresAt = Instant.now().epochSecond + expiresIn - 15
+        repo.saveSpotifyAccessToken(accessToken)
+        if (refreshToken.isNotBlank()) repo.saveSpotifyRefreshToken(refreshToken)
+        repo.saveSpotifyExpiresAtEpochSec(expiresAt)
+
+        repo.saveSpotifyCodeVerifier("")
+        repo.saveSpotifyState("")
     }
 
-    // ─────────────────────────────
-    // HTTP helpers
-    // ─────────────────────────────
     private fun postForm(urlStr: String, body: String): JSONObject {
         val url = URL(urlStr)
         val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -147,7 +111,6 @@ object SpotifyAuth {
     private fun randomUrlSafe(bytes: Int): String {
         val b = ByteArray(bytes)
         SecureRandom().nextBytes(b)
-        // Base64URL without padding
         return Base64.encodeToString(b, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
@@ -157,12 +120,3 @@ object SpotifyAuth {
         return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 }
-
-// small “first()” helpers to avoid repeating in ViewModel
-private suspend fun UserPreferencesRepository.spotifyClientIdFirst() = spotifyClientId.first()
-private suspend fun UserPreferencesRepository.spotifyStateFirst() = spotifyState.first()
-private suspend fun UserPreferencesRepository.spotifyCodeVerifierFirst() = spotifyCodeVerifier.first()
-private suspend fun UserPreferencesRepository.spotifyAccessTokenFirst() = spotifyAccessToken.first()
-private suspend fun UserPreferencesRepository.spotifyRefreshTokenFirst() = spotifyRefreshToken.first()
-private suspend fun UserPreferencesRepository.spotifyExpiresAtEpochSecFirst() = spotifyExpiresAtEpochSec.first()
-
