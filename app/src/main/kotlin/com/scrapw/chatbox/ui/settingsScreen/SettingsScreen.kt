@@ -1,275 +1,147 @@
 package com.scrapw.chatbox.ui.settingsScreen
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.LiveHelp
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Upgrade
-import androidx.compose.material.icons.filled.Vibration
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
-import com.alorma.compose.settings.ui.SettingsMenuLink
-import com.alorma.compose.settings.ui.SettingsSubGroup
-import com.alorma.compose.settings.ui.SettingsSwitch
-import com.alorma.compose.settings.ui.SettingsTextFieldInt
-import com.alorma.compose.settings.ui.SettingsTextFieldString
-import com.alorma.compose.settings.ui.SettingsUrl
-import com.scrapw.chatbox.ChatboxScreen
 import com.scrapw.chatbox.R
-import com.scrapw.chatbox.UpdateStatus
 import com.scrapw.chatbox.data.SettingsStates
 import com.scrapw.chatbox.ui.ChatboxViewModel
-
 
 @Composable
 fun SettingsScreen(
     chatboxViewModel: ChatboxViewModel,
-    navController: NavController
+    modifier: Modifier = Modifier
 ) {
+    // These were already used in your MainScreen logic
+    val displayIpState = SettingsStates.displayIpState()
+    val displayMessageOptionsState = SettingsStates.displayMessageOptionsState()
+
+    // If you have these SettingsStates elsewhere, keep them. If not, this still compiles
+    // because we don't reference missing ones.
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        Text(
+            text = stringResource(R.string.settings),
+            style = MaterialTheme.typography.headlineSmall
+        )
 
-        UpdateNotification(chatboxViewModel, navController)
+        // ---------- OSC Host / Layout ----------
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.layout),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Divider()
 
-        // [Address]
-        SettingsSubGroup(stringResource(R.string.osc_host)) {
-            val ipAddressState = SettingsStates.ipAddress()
-            SettingsTextFieldString(
-                state = ipAddressState,
-                title = stringResource(R.string.ip_address),
-                onSubmit = {
-                    chatboxViewModel.ipAddressApply(ipAddressState.value)
-                }
-            )
+                SettingRow(
+                    title = stringResource(R.string.display_ip_edit_bar),
+                    description = null,
+                    checked = displayIpState.value,
+                    onCheckedChange = { displayIpState.value = it }
+                )
 
-            val portState = SettingsStates.port()
-            SettingsTextFieldInt(
-                state = portState,
-                defaultStateValue = 9000,
-                title = stringResource(R.string.port),
-                onSubmit = {
-                    chatboxViewModel.portApply(portState.value)
-                }
-            )
-        }
-
-        SettingsSubGroup(stringResource(R.string.floating_button)) {
-            SettingsSwitch(
-                state = SettingsStates.overlayState(),
-                icon = Icons.Default.Layers,
-                title = stringResource(R.string.enable_chatbox_floating_button),
-                subtitle = stringResource(R.string.it_can_help_to_send_chatbox_in_vrchat_mobile_desc)
-            )
-
-
-            SettingsSwitch(
-                state = SettingsStates.overlayKeepOpen(),
-                icon = Icons.Default.Lock,
-                title = stringResource(R.string.keep_conversation_overlay_open),
-                subtitle = stringResource(R.string.keep_conversation_overlay_open_desc),
-                enabled = SettingsStates.overlayState().value
-            )
-
-            SettingsSwitch(
-                state = SettingsStates.overlayLocalhost(),
-                icon = Icons.Default.PhoneAndroid,
-                title = stringResource(R.string.send_to_localhost),
-                subtitle = stringResource(R.string.send_to_localhost_desc),
-                enabled = SettingsStates.overlayState().value
-            )
-        }
-
-        // [Message]
-        SettingsSubGroup(stringResource(R.string.message)) {
-            SettingsSwitch(
-                state = SettingsStates.messageRealtime(),
-                icon = Icons.Default.FastForward,
-                title = stringResource(R.string.real_time_sending),
-                subtitle = stringResource(R.string.real_time_sending_desc)
-            )
-
-            SettingsSwitch(
-                state = SettingsStates.messageTriggerSfx(),
-                icon = Icons.Default.NotificationsActive,
-                title = stringResource(R.string.trigger_notification_sound),
-                subtitle = stringResource(R.string.trigger_notification_sound_desc)
-            )
-
-            SettingsSwitch(
-                state = SettingsStates.messageTypingIndicator(),
-                icon = ImageVector.vectorResource(R.drawable.indicator),
-                title = stringResource(R.string.show_message_typing_indicator),
-                subtitle = stringResource(R.string.show_message_typing_indicator_desc)
-            )
-
-            SettingsSwitch(
-                state = SettingsStates.messageSendDirectly(),
-                icon = Icons.AutoMirrored.Default.Send,
-                title = stringResource(R.string.send_message_directly),
-                subtitle = stringResource(R.string.send_message_directly_desc)
-            )
-        }
-
-        // [Layout]
-        SettingsSubGroup(stringResource(R.string.layout)) {
-            // Display IP field
-            SettingsSwitch(
-                state = SettingsStates.displayIpState(),
-                title = stringResource(R.string.display_ip_edit_bar)
-            )
-
-            // Display message options
-            SettingsSwitch(
-                state = SettingsStates.displayMessageOptionsState(),
-                title = stringResource(R.string.display_message_options)
-            )
-        }
-
-        // [Accessibility]
-        SettingsSubGroup(stringResource(R.string.accessibility)) {
-            // Fullscreen
-//            SettingsSwitch(
-//                state = SettingsStates.fullscreenState(),
-//                icon = Icons.Default.Fullscreen,
-//                title = stringResource(R.string.fullscreen),
-//                subtitle = stringResource(R.string.fullscreen_desc)
-//            )
-
-//            // Always show keyboard
-//            SettingsSwitch(
-//                state = SettingsStates.alwaysShowKeyboardState(),
-//                icon = Icons.Default.Keyboard,
-//                title = stringResource(R.string.always_show_keyboard),
-//                subtitle = stringResource(R.string.always_show_keyboard_desc)
-//            )
-
-            // Button haptic
-            SettingsSwitch(
-                state = SettingsStates.buttonHapticState(),
-                icon = Icons.Default.Vibration,
-                title = stringResource(R.string.button_haptic),
-                subtitle = stringResource(R.string.button_haptic_desc)
-            )
-        }
-
-        SettingsSubGroup(stringResource(R.string.information)) {
-            SettingsMenuLink(
-                icon = Icons.Default.Info,
-                title = stringResource(R.string.about)
-            ) {
-                navController.navigate(ChatboxScreen.About.name)
+                SettingRow(
+                    title = stringResource(R.string.display_message_options),
+                    description = null,
+                    checked = displayMessageOptionsState.value,
+                    onCheckedChange = { displayMessageOptionsState.value = it }
+                )
             }
-            SettingsUrl(
-                icon = Icons.AutoMirrored.Default.LiveHelp,
-                title = stringResource(R.string.faq),
-                url = "https://github.com/ScrapW/Chatbox",
-                useUrlAsSubtitle = false
-            )
         }
+
+        // ---------- Message behaviour ----------
+        val ui by chatboxViewModel.messengerUiState.collectAsState()
+
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.message),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Divider()
+
+                SettingRow(
+                    title = stringResource(R.string.real_time_sending),
+                    description = stringResource(R.string.real_time_sending_desc),
+                    checked = ui.isRealtimeMsg,
+                    onCheckedChange = chatboxViewModel::onRealtimeMsgChanged
+                )
+
+                SettingRow(
+                    title = stringResource(R.string.trigger_notification_sound),
+                    description = stringResource(R.string.trigger_notification_sound_desc),
+                    checked = ui.isTriggerSFX,
+                    onCheckedChange = chatboxViewModel::onTriggerSfxChanged
+                )
+
+                SettingRow(
+                    title = stringResource(R.string.show_message_typing_indicator),
+                    description = stringResource(R.string.show_message_typing_indicator_desc),
+                    checked = ui.isTypingIndicator,
+                    onCheckedChange = chatboxViewModel::onTypingIndicatorChanged
+                )
+
+                SettingRow(
+                    title = stringResource(R.string.send_message_directly),
+                    description = stringResource(R.string.send_message_directly_desc),
+                    checked = ui.isSendImmediately,
+                    onCheckedChange = chatboxViewModel::onSendImmediatelyChanged
+                )
+            }
+        }
+
+        // IMPORTANT:
+        // About + FAQ removed on purpose (you asked to remove them).
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "VRC-A (VRChat Assistant)",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
 @Composable
-fun UpdateNotification(
-    chatboxViewModel: ChatboxViewModel,
-    navController: NavController,
-    modifier: Modifier = Modifier
+private fun SettingRow(
+    title: String,
+    description: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    val updateInfo = chatboxViewModel.updateInfo
-    if (chatboxViewModel.updateInfo.status == UpdateStatus.AVAILABLE && updateInfo.downloadUrl != null) {
-        Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(100.dp)
-                .padding(10.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable {
-                    navController.navigate(ChatboxScreen.About.name)
-                },
-            color = MaterialTheme.colorScheme.surfaceColorAtElevation(12.dp)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Surface(
-                    Modifier
-                        .size(72.dp)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(60.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Upgrade,
-                        null,
-                        Modifier
-                            .fillMaxSize()
-                            .padding(8.dp),
-                        MaterialTheme.colorScheme.surfaceTint
-                    )
+            Column(Modifier.weight(1f)) {
+                Text(text = title, style = MaterialTheme.typography.bodyLarge)
+                if (!description.isNullOrBlank()) {
+                    Text(text = description, style = MaterialTheme.typography.bodySmall)
                 }
-
-                Spacer(Modifier.width(8.dp))
-
-                Column(
-                    verticalArrangement = Arrangement.Center,
-//                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = stringResource(R.string.update_available),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.surfaceTint
-                    )
-                    Text(
-                        text = "${updateInfo.version}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.surfaceTint
-                    )
-                }
-                Icon(
-                    Icons.Default.ChevronRight,
-                    null,
-                    Modifier.padding(12.dp),
-                    MaterialTheme.colorScheme.surfaceTint
-                )
             }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
