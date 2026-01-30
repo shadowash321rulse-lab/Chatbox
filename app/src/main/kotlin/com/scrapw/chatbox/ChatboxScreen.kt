@@ -77,7 +77,6 @@ fun ChatboxScreen(
 
 /**
  * Compatible bottom bar that does NOT depend on NavigationBarItem.
- * (Fixes your "Unresolved reference: NavigationBarItem" build error.)
  */
 @Composable
 private fun SlimBottomBar(
@@ -109,7 +108,8 @@ private fun BottomTab(
     onSelect: (AppPage) -> Unit
 ) {
     val selected = page == current
-    val contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val contentColor =
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 
     Column(
         Modifier
@@ -120,7 +120,12 @@ private fun BottomTab(
     ) {
         Icon(icon, contentDescription = page.title, tint = contentColor)
         Spacer(Modifier.height(2.dp))
-        Text(page.title, style = MaterialTheme.typography.labelSmall, color = contentColor, maxLines = 1)
+        Text(
+            page.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            maxLines = 1
+        )
     }
 }
 
@@ -160,7 +165,7 @@ private fun SectionCard(
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
 
-    // Local input so typing doesn't fight the flow/state (fixes "buggy IP typing" feel)
+    // Local input so typing doesn't fight the flow/state
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
     LaunchedEffect(uiState.ipAddress) {
         if (ipInput.isBlank()) ipInput = uiState.ipAddress
@@ -198,7 +203,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Manual Send",
-            subtitle = "One-off message (doesn’t affect Cycle/Now Playing)."
+            subtitle = "One-off message (doesn’t affect Cycle/Now Playing/AFK)."
         ) {
             OutlinedTextField(
                 value = vm.messageText.value,
@@ -218,9 +223,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 private fun CyclePage(vm: ChatboxViewModel) {
     PageContainer {
 
+        // =========================
+        // AFK (runs on its own now)
+        // =========================
         SectionCard(
             title = "AFK (top line)",
-            subtitle = "AFK shows above Cycle + Now Playing."
+            subtitle = "AFK shows above Cycle + Now Playing. You can run AFK by itself."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("AFK enabled")
@@ -238,12 +246,30 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("AFK text") }
             )
 
-            Button(
+            // NEW: AFK Start/Stop sender buttons
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.startAfkSender() },
+                    modifier = Modifier.weight(1f),
+                    enabled = vm.afkEnabled
+                ) { Text("Start AFK") }
+
+                OutlinedButton(
+                    onClick = { vm.stopAfkSender() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Stop AFK") }
+            }
+
+            OutlinedButton(
                 onClick = { vm.sendAfkNow() },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = vm.afkEnabled
             ) { Text("Send AFK once") }
         }
 
+        // =========================
+        // Cycle
+        // =========================
         SectionCard(
             title = "Cycle Messages",
             subtitle = "Rotates your lines. Now Playing stays underneath automatically."
@@ -399,7 +425,11 @@ private fun SettingsPage() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("VRC-A = VRChat Assistant\nMade by Ashoska Mitsu Sisko\nBased on ScrapW’s base, fully revamped.")
+                Text(
+                    "VRC-A = VRChat Assistant\n" +
+                        "Made by Ashoska Mitsu Sisko\n" +
+                        "Based on ScrapW’s base, fully revamped."
+                )
             }
         }
     }
