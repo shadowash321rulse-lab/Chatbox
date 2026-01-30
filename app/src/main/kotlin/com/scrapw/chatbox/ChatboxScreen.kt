@@ -26,6 +26,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
+import kotlinx.coroutines.delay
 
 private enum class AppPage(val title: String) {
     Dashboard("Dashboard"),
@@ -229,6 +230,22 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
+    var afkToast by rememberSaveable { mutableStateOf("") }
+    var cycleToast by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(afkToast) {
+        if (afkToast.isNotBlank()) {
+            delay(1200)
+            afkToast = ""
+        }
+    }
+    LaunchedEffect(cycleToast) {
+        if (cycleToast.isNotBlank()) {
+            delay(1200)
+            cycleToast = ""
+        }
+    }
+
     PageContainer {
         SectionCard(
             title = "AFK (top line)",
@@ -244,7 +261,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
             OutlinedTextField(
                 value = vm.afkMessage,
-                onValueChange = { vm.updateAfkMessage(it) }, // ✅ FIX
+                onValueChange = { vm.updateAfkMessage(it) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("AFK text") }
@@ -256,9 +273,20 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 (1..3).forEach { slot ->
-                    OutlinedButton(onClick = { vm.loadAfkPreset(slot) }) { Text("Load $slot") }
-                    Button(onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }) { Text("Save $slot") }
+                    OutlinedButton(onClick = {
+                        vm.loadAfkPreset(slot)
+                        afkToast = "Loaded AFK preset $slot"
+                    }) { Text("Load $slot") }
+
+                    Button(onClick = {
+                        vm.saveAfkPreset(slot, vm.afkMessage)
+                        afkToast = "Saved AFK preset $slot"
+                    }) { Text("Save $slot") }
                 }
+            }
+
+            if (afkToast.isNotBlank()) {
+                Text(afkToast, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -289,16 +317,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 Text("Cycle enabled")
                 Switch(
                     checked = vm.cycleEnabled,
-                    onCheckedChange = {
-                        vm.cycleEnabled = it
-                        if (!it) vm.stopCycle()
+                    onCheckedChange = { enabled ->
+                        vm.setCycleEnabled(enabled) // ✅ persists
                     }
                 )
             }
 
             OutlinedTextField(
                 value = vm.cycleMessages,
-                onValueChange = { vm.updateCycleMessages(it) }, // ✅ FIX
+                onValueChange = { vm.updateCycleMessages(it) },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 4,
                 label = { Text("Lines (one per line)") }
@@ -310,15 +337,26 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 (1..5).forEach { slot ->
-                    OutlinedButton(onClick = { vm.loadCyclePreset(slot) }) { Text("Load $slot") }
-                    Button(onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }) { Text("Save $slot") }
+                    OutlinedButton(onClick = {
+                        vm.loadCyclePreset(slot)
+                        cycleToast = "Loaded Cycle preset $slot"
+                    }) { Text("Load $slot") }
+
+                    Button(onClick = {
+                        vm.saveCyclePreset(slot, vm.cycleMessages)
+                        cycleToast = "Saved Cycle preset $slot"
+                    }) { Text("Save $slot") }
                 }
+            }
+
+            if (cycleToast.isNotBlank()) {
+                Text(cycleToast, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
 
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
+                    raw.toIntOrNull()?.let { vm.setCycleIntervalSeconds(it) } // ✅ persists + min 2
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
