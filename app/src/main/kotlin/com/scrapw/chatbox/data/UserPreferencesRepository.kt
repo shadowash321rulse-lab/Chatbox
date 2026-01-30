@@ -28,21 +28,20 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // --- Cycle persistence ---
+        // Cycle persistence
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // --- AFK persistence (TEXT ONLY) ---
+        // AFK persistence (TEXT ONLY)
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // --- AFK Presets (3 slots) ---
+        // AFK presets (3 slots)
         val AFK_PRESET_1 = stringPreferencesKey("afk_preset_1")
         val AFK_PRESET_2 = stringPreferencesKey("afk_preset_2")
         val AFK_PRESET_3 = stringPreferencesKey("afk_preset_3")
 
-        // --- Cycle presets (5 slots) ---
-        // Keep your existing 1..3 keys for compatibility:
+        // Cycle presets (5 slots)
         val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
         val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
 
@@ -52,7 +51,6 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_PRESET_3_MESSAGES = stringPreferencesKey("cycle_preset_3_messages")
         val CYCLE_PRESET_3_INTERVAL = intPreferencesKey("cycle_preset_3_interval")
 
-        // NEW 4..5:
         val CYCLE_PRESET_4_MESSAGES = stringPreferencesKey("cycle_preset_4_messages")
         val CYCLE_PRESET_4_INTERVAL = intPreferencesKey("cycle_preset_4_interval")
 
@@ -99,15 +97,13 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
     suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
 
-    // ----------------------------
-    // AFK Presets (3 slots)
-    // ----------------------------
+    // AFK presets (3)
     val afkPreset1 = get(AFK_PRESET_1, "")
     val afkPreset2 = get(AFK_PRESET_2, "")
     val afkPreset3 = get(AFK_PRESET_3, "")
 
     suspend fun saveAfkPreset(slot: Int, text: String) {
-        val key = when (slot.coerceIn(1, 3)) {
+        val key = when (slot) {
             1 -> AFK_PRESET_1
             2 -> AFK_PRESET_2
             else -> AFK_PRESET_3
@@ -160,16 +156,6 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         dataStore.edit {
             it[CYCLE_PRESET_5_MESSAGES] = messages
             it[CYCLE_PRESET_5_INTERVAL] = intervalSeconds
-        }
-    }
-
-    suspend fun saveCyclePreset(slot: Int, messages: String, intervalSeconds: Int) {
-        when (slot.coerceIn(1, 5)) {
-            1 -> saveCyclePreset1(messages, intervalSeconds)
-            2 -> saveCyclePreset2(messages, intervalSeconds)
-            3 -> saveCyclePreset3(messages, intervalSeconds)
-            4 -> saveCyclePreset4(messages, intervalSeconds)
-            5 -> saveCyclePreset5(messages, intervalSeconds)
         }
     }
 
