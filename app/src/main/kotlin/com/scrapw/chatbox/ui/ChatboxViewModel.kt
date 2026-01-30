@@ -131,7 +131,6 @@ class ChatboxViewModel(
 
     val isAddressResolvable = mutableStateOf(true)
 
-    // overlay expects (TextFieldValue, Boolean)
     fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         messageText.value = message
@@ -195,9 +194,9 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // SAFETY: send throttle (prevents VRChat cutouts)
+    // SAFETY: send throttle (reduce VRChat cutouts)
     // =========================================================
-    private val minSendIntervalMs = 2_000L // hard floor (2s)
+    private val minSendIntervalMs = 2_000L // floor 2s
     private var lastSendAtMs = 0L
 
     // Debug strings (shown in Debug tab)
@@ -211,34 +210,40 @@ class ChatboxViewModel(
         private set
 
     // =========================================================
-    // AFK (top line) — forced interval, separate sender
+    // AFK (top line) — forced interval, TEXT persists
     // =========================================================
     var afkEnabled by mutableStateOf(false)
 
-    // IMPORTANT: private set + renamed updater avoids JVM clash
     var afkMessage by mutableStateOf("AFK")
         private set
 
-    private val afkForcedIntervalMs = 10_000L // forced; no UI control
+    private val afkForcedIntervalMs = 10_000L
     private var afkJob: Job? = null
 
-    // AFK presets (3) - in-memory for now (compile-safe)
-    // NOTE: If your repo already has persistent storage, we can wire it later.
-    private val afkPresets = Array(3) { "" }
+    // AFK presets (3) – persisted
+    private val afkPresetCache = Array(3) { "" }
 
     fun updateAfkMessage(text: String) {
         afkMessage = text
+        viewModelScope.launch {
+            userPreferencesRepository.saveAfkMessage(text)
+        }
+        // refresh combined output if AFK is enabled
+        if (afkEnabled) sendCombinedNow(local = false, reason = "afkEdit")
     }
 
     fun saveAfkPreset(slot: Int, text: String) {
         val idx = (slot - 1).coerceIn(0, 2)
-        afkPresets[idx] = text
+        afkPresetCache[idx] = text
+        viewModelScope.launch {
+            userPreferencesRepository.saveAfkPreset(slot, text)
+        }
     }
 
     fun loadAfkPreset(slot: Int) {
         val idx = (slot - 1).coerceIn(0, 2)
-        val t = afkPresets[idx]
-        if (t.isNotBlank()) afkMessage = t
+        val t = afkPresetCache[idx]
+        if (t.isNotBlank()) updateAfkMessage(t)
     }
 
     fun startAfkSender(local: Boolean = false) {
@@ -255,7 +260,6 @@ class ChatboxViewModel(
     fun stopAfkSender(local: Boolean = false) {
         afkJob?.cancel()
         afkJob = null
-        // Remove AFK from chatbox immediately by pushing an updated combined message
         sendCombinedNow(local, reason = "afkStop")
     }
 
@@ -264,33 +268,60 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // Cycle (separate sender)
+    // Cycle — persists enabled/messages/interval + 5 presets
     // =========================================================
     var cycleEnabled by mutableStateOf(false)
-
     var cycleMessages by mutableStateOf("")
         private set
-
     var cycleIntervalSeconds by mutableStateOf(3)
+
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
-    // Cycle presets (5) - in-memory for now (compile-safe)
-    private val cyclePresets = Array(5) { "" }
+    private val cyclePresetCache = Array(5) { "" }
+    private val cyclePresetIntervalCache = IntArray(5) { 3 }
 
     fun updateCycleMessages(text: String) {
         cycleMessages = text
+        viewModelScope.launch {
+            userPreferencesRepository.saveCycleMessages(text)
+        }
+    }
+
+    fun setCycleIntervalSeconds(seconds: Int) {
+        cycleIntervalSeconds = max(2, seconds)
+        viewModelScope.launch {
+            userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds)
+        }
+    }
+
+    fun setCycleEnabled(enabled: Boolean) {
+        cycleEnabled = enabled
+        viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(enabled) }
+        if (!enabled) stopCycle()
     }
 
     fun saveCyclePreset(slot: Int, text: String) {
         val idx = (slot - 1).coerceIn(0, 4)
-        cyclePresets[idx] = text
+        cyclePresetCache[idx] = text
+        cyclePresetIntervalCache[idx] = cycleIntervalSeconds
+        viewModelScope.launch {
+            userPreferencesRepository.saveCyclePreset(slot, text, cycleIntervalSeconds)
+        }
     }
 
     fun loadCyclePreset(slot: Int) {
         val idx = (slot - 1).coerceIn(0, 4)
-        val t = cyclePresets[idx]
-        if (t.isNotBlank()) cycleMessages = t
+        val text = cyclePresetCache[idx]
+        val interval = cyclePresetIntervalCache[idx]
+        if (text.isNotBlank()) {
+            cycleMessages = text
+            cycleIntervalSeconds = max(2, interval)
+            viewModelScope.launch {
+                userPreferencesRepository.saveCycleMessages(cycleMessages)
+                userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds)
+            }
+        }
     }
 
     fun startCycle(local: Boolean = false) {
@@ -301,11 +332,9 @@ class ChatboxViewModel(
         cycleJob = viewModelScope.launch {
             cycleIndex = 0
             while (cycleEnabled) {
-                // Rotate cycle line, but sending is always a combined render
-                cycleIndex = (cycleIndex + 1) % msgs.size
                 sendCombinedNow(local, reason = "cycleTick")
-                val delaySec = max(2, cycleIntervalSeconds) // floor 2s
-                delay(delaySec.toLong() * 1000L)
+                cycleIndex = (cycleIndex + 1) % msgs.size
+                delay(max(2, cycleIntervalSeconds).toLong() * 1000L)
             }
         }
     }
@@ -313,21 +342,17 @@ class ChatboxViewModel(
     fun stopCycle(local: Boolean = false) {
         cycleJob?.cancel()
         cycleJob = null
-        // Remove cycle line immediately by pushing an updated combined message
         sendCombinedNow(local, reason = "cycleStop")
     }
 
     // =========================================================
-    // Now Playing (phone music) – UI still calls these as “spotify”
+    // Now Playing (phone music) – UI still calls these “spotify”
     // =========================================================
     var spotifyEnabled by mutableStateOf(false)
     var spotifyDemoEnabled by mutableStateOf(false)
     var spotifyPreset by mutableStateOf(1)
-
-    // refresh seconds for progress updates (separate from main cycle speed)
     var musicRefreshSeconds by mutableStateOf(2)
 
-    // Debug fields shown in UI
     var listenerConnected by mutableStateOf(false)
     var activePackage by mutableStateOf("(none)")
     var nowPlayingDetected by mutableStateOf(false)
@@ -335,18 +360,61 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
-    // internal now playing timing
     private var nowPlayingDurationMs by mutableStateOf(0L)
     private var nowPlayingPositionMs by mutableStateOf(0L)
     private var nowPlayingPositionUpdateTimeMs by mutableStateOf(0L)
     private var nowPlayingSpeed by mutableStateOf(1f)
+
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
 
     private var nowPlayingJob: Job? = null
 
     init {
-        // Bind to listener state (fixes “false/blank/blank” sticking)
+        // Load persisted AFK + Cycle settings
+        viewModelScope.launch {
+            userPreferencesRepository.afkMessage.collect { stored ->
+                if (stored.isNotBlank()) afkMessage = stored
+            }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.cycleEnabled.collect { stored ->
+                cycleEnabled = stored
+            }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.cycleMessages.collect { stored ->
+                cycleMessages = stored
+            }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.cycleInterval.collect { stored ->
+                cycleIntervalSeconds = max(2, stored)
+            }
+        }
+
+        // Load persisted AFK presets
+        viewModelScope.launch { userPreferencesRepository.afkPreset1.collect { afkPresetCache[0] = it } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset2.collect { afkPresetCache[1] = it } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset3.collect { afkPresetCache[2] = it } }
+
+        // Load persisted Cycle presets 1..5
+        viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetCache[0] = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervalCache[0] = it } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset2Messages.collect { cyclePresetCache[1] = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset2Interval.collect { cyclePresetIntervalCache[1] = it } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset3Messages.collect { cyclePresetCache[2] = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset3Interval.collect { cyclePresetIntervalCache[2] = it } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset4Messages.collect { cyclePresetCache[3] = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset4Interval.collect { cyclePresetIntervalCache[3] = it } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetCache[4] = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervalCache[4] = it } }
+
+        // Bind NowPlayingState
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -381,13 +449,11 @@ class ChatboxViewModel(
 
     fun startNowPlayingSender(local: Boolean = false) {
         if (!spotifyEnabled) return
-
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
                 sendCombinedNow(local, reason = "musicTick")
-                val d = max(2, musicRefreshSeconds) // floor 2s
-                delay(d.toLong() * 1000L)
+                delay(max(2, musicRefreshSeconds).toLong() * 1000L)
             }
         }
     }
@@ -395,7 +461,6 @@ class ChatboxViewModel(
     fun stopNowPlayingSender(local: Boolean = false) {
         nowPlayingJob?.cancel()
         nowPlayingJob = null
-        // Remove music block immediately by pushing an updated combined message
         sendCombinedNow(local, reason = "musicStop")
     }
 
@@ -415,21 +480,17 @@ class ChatboxViewModel(
     private fun buildCombinedText(): String {
         val lines = mutableListOf<String>()
 
-        // AFK (top)
         val afkLine = buildAfkLine()
         if (afkLine.isNotBlank()) lines += afkLine
 
-        // Cycle (middle)
         val cycleLine = buildCycleLine()
         if (cycleLine.isNotBlank()) lines += cycleLine
 
-        // Music (bottom)
         val musicLines = buildNowPlayingLines()
         lines.addAll(musicLines)
 
         val combined = joinWithLimit(lines, 144)
 
-        // Debug previews
         debugLastAfkOsc = afkLine
         debugLastCycleOsc = cycleLine
         debugLastMusicOsc = musicLines.joinToString("\n")
@@ -442,7 +503,6 @@ class ChatboxViewModel(
         if (!afkEnabled) return ""
         val t = afkMessage.trim()
         if (t.isBlank()) return "AFK"
-        // Keep it short-ish, but don’t hard cut too aggressive
         return t.take(48)
     }
 
@@ -457,17 +517,14 @@ class ChatboxViewModel(
     private fun buildNowPlayingLines(): List<String> {
         if (!spotifyEnabled) return emptyList()
 
-        // Demo fallback if no real detection
         val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
         val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
 
-        // If truly nothing detected and demo off → show nothing
         if (!spotifyDemoEnabled && !nowPlayingDetected) return emptyList()
 
         val safeTitle = title.takeIf { it != "(blank)" } ?: ""
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
-        // line 1: artist — title
         val maxLine = 42
         val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
         val line1 = when {
@@ -476,7 +533,6 @@ class ChatboxViewModel(
             else -> safeTitle.take(maxLine - 1) + "…"
         }.trim()
 
-        // live position estimate (keeps progress moving even if notification isn’t updating)
         val (pos, dur) = getLivePositionAndDuration()
 
         val bar = renderProgressBar(spotifyPreset, pos, dur)
@@ -490,17 +546,14 @@ class ChatboxViewModel(
     private fun getLivePositionAndDuration(): Pair<Long, Long> {
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 80_000L else nowPlayingDurationMs
 
-        // demo
         if (spotifyDemoEnabled && !nowPlayingDetected) {
             return 58_000L to dur
         }
 
-        // If paused or no update timestamp, use snapshot
         if (!nowPlayingIsPlaying || nowPlayingPositionUpdateTimeMs <= 0L) {
             return nowPlayingPositionMs to dur
         }
 
-        // Estimate live position using elapsed time since snapshot
         val now = android.os.SystemClock.elapsedRealtime()
         val delta = now - nowPlayingPositionUpdateTimeMs
         val est = nowPlayingPositionMs + (delta * nowPlayingSpeed).toLong()
@@ -508,41 +561,40 @@ class ChatboxViewModel(
         return clamped to dur
     }
 
-    // Your 5 preset bars (short)
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // love ♡━━━◉━━━━♡ (10 total incl caps)
+            1 -> {
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
                 inner[idx] = '◉'
                 "♡" + inner.concatToString() + "♡"
             }
-            2 -> { // minimal
+            2 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-            3 -> { // crystal
+            3 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-            4 -> { // soundwave
+            4 -> {
                 val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
                 out[idx] = '●'
                 out.concatToString()
             }
-            else -> { // geometry
+            else -> {
                 val bg = charArrayOf('▣','▣','▣','▢','▢','▢','▢','▢','▢','▢')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
@@ -564,7 +616,6 @@ class ChatboxViewModel(
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
 
-        // Keep bottom content (music) by building bottom-up
         val out = ArrayList<String>()
         var total = 0
 
@@ -587,24 +638,15 @@ class ChatboxViewModel(
         return out.joinToString("\n")
     }
 
-    // =========================================================
-    // Actual send
-    // =========================================================
     private fun sendCombinedNow(local: Boolean, reason: String) {
         val text = buildCombinedText()
-
-        // If everything is OFF, push a blank clear (space) so it disappears immediately
         val finalText = if (text.isBlank()) " " else text
-
         sendToVrchatThrottled(finalText, local)
     }
 
     private fun sendToVrchatThrottled(text: String, local: Boolean) {
         val now = System.currentTimeMillis()
-        if (now - lastSendAtMs < minSendIntervalMs) {
-            // Too soon; drop this tick to avoid VRChat cutouts
-            return
-        }
+        if (now - lastSendAtMs < minSendIntervalMs) return
         lastSendAtMs = now
 
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
