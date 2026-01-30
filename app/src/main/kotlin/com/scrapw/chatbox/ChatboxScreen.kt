@@ -230,9 +230,6 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
     PageContainer {
-        // =========================
-        // AFK
-        // =========================
         SectionCard(
             title = "AFK (top line)",
             subtitle = "AFK shows above Cycle + Now Playing. Forced interval. Use presets to save text."
@@ -247,7 +244,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
             OutlinedTextField(
                 value = vm.afkMessage,
-                onValueChange = { vm.setAfkMessage(it) }, // ✅ FIX
+                onValueChange = { vm.updateAfkMessage(it) }, // ✅ FIX
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("AFK text") }
@@ -259,13 +256,8 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 (1..3).forEach { slot ->
-                    OutlinedButton(
-                        onClick = { vm.loadAfkPreset(slot) }
-                    ) { Text("Load $slot") }
-
-                    Button(
-                        onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }
-                    ) { Text("Save $slot") }
+                    OutlinedButton(onClick = { vm.loadAfkPreset(slot) }) { Text("Load $slot") }
+                    Button(onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }) { Text("Save $slot") }
                 }
             }
 
@@ -289,9 +281,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
             ) { Text("Send AFK once") }
         }
 
-        // =========================
-        // Cycle
-        // =========================
         SectionCard(
             title = "Cycle Messages",
             subtitle = "Rotates your lines. Now Playing stays underneath automatically."
@@ -309,7 +298,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
             OutlinedTextField(
                 value = vm.cycleMessages,
-                onValueChange = { vm.setCycleMessages(it) }, // ✅ FIX
+                onValueChange = { vm.updateCycleMessages(it) }, // ✅ FIX
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 4,
                 label = { Text("Lines (one per line)") }
@@ -321,13 +310,8 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 (1..5).forEach { slot ->
-                    OutlinedButton(
-                        onClick = { vm.loadCyclePreset(slot) }
-                    ) { Text("Load $slot") }
-
-                    Button(
-                        onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }
-                    ) { Text("Save $slot") }
+                    OutlinedButton(onClick = { vm.loadCyclePreset(slot) }) { Text("Load $slot") }
+                    Button(onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }) { Text("Save $slot") }
                 }
             }
 
@@ -478,31 +462,6 @@ private fun DebugPage(vm: ChatboxViewModel) {
 private fun SettingsPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
-    val fullDoc = remember {
-        """
-VRC-A (VRChat Assistant)
-Made by: Ashoska Mitsu Sisko
-Base: ScrapW’s Chatbox base (heavily revamped)
-
-============================================================
-WHAT THIS APP IS
-============================================================
-VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
-It’s meant for standalone / mobile-friendly setups where you want:
-- A quick “Send message” tool
-- A cycling status / rotating messages system
-- A live “Now Playing” music block (from your phone’s media notifications)
-- An AFK tag at the very top
-
-VRC-A is designed to be “easy to test” with debug indicators so you can tell
-what’s failing (connection, permissions, detection, etc).
-
-============================================================
-(Full document continues…)
-============================================================
-        """.trimIndent()
-    }
-
     val overview = remember {
         """
 VRC-A (VRChat Assistant)
@@ -523,7 +482,7 @@ FEATURES
 - Now Playing block (phone notifications)
 - 5 progress presets
 - AFK tag at top
-- Debug indicators
+- Debug indicators (including OSC preview)
 - Presets: AFK (3) + Cycle (5)
         """.trimIndent()
     }
@@ -542,13 +501,7 @@ TUTORIAL
         """.trimIndent()
     }
 
-    val bugs = remember {
-        """
-BUGS (History + Current)
-See Full Doc tab for the full list.
-        """.trimIndent()
-    }
-
+    val bugs = remember { "See Full Doc (you can paste the full doc here anytime)." }
     val help = remember {
         """
 HELP
@@ -557,6 +510,8 @@ HELP
 - Progress not moving: depends on music player
         """.trimIndent()
     }
+
+    val fullDoc = remember { "Paste your full document here when you want it embedded fully." }
 
     PageContainer {
         SectionCard(
@@ -579,22 +534,20 @@ HELP
                         onClick = { tab = t },
                         colors = colors,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(t.title)
-                    }
+                    ) { Text(t.title) }
                 }
             }
 
-            SelectionContainer {
-                val text = when (tab) {
-                    InfoTab.Overview -> overview
-                    InfoTab.Features -> features
-                    InfoTab.Tutorial -> tutorial
-                    InfoTab.Bugs -> bugs
-                    InfoTab.Troubleshoot -> help
-                    InfoTab.FullDoc -> fullDoc
-                }
+            val text = when (tab) {
+                InfoTab.Overview -> overview
+                InfoTab.Features -> features
+                InfoTab.Tutorial -> tutorial
+                InfoTab.Bugs -> bugs
+                InfoTab.Troubleshoot -> help
+                InfoTab.FullDoc -> fullDoc
+            }
 
+            SelectionContainer {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyMedium,
@@ -603,10 +556,7 @@ HELP
             }
         }
 
-        SectionCard(
-            title = "About (short)",
-            subtitle = null
-        ) {
+        SectionCard(title = "About (short)") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
