@@ -28,10 +28,9 @@ fun IpField(
 ) {
     val uiState by chatboxViewModel.messengerUiState.collectAsState()
 
-    // Local field so typing is smooth and doesn't "fight" the flow/state
+    // local buffer so typing doesn't "fight" StateFlow updates
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
 
-    // Keep input in sync when the stored IP changes (but don’t clobber user typing)
     LaunchedEffect(uiState.ipAddress) {
         if (ipInput.isBlank()) ipInput = uiState.ipAddress
     }
