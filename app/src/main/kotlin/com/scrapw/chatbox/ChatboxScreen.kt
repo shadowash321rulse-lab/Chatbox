@@ -1,12 +1,6 @@
-// (PASTE YOUR ChatboxScreen.kt EXACTLY AS YOU POSTED)
-// Only difference: Cycle switch + Cycle interval now call:
-// vm.setCycleEnabledFlag(...)
-// vm.setCycleIntervalSecondsFlag(...)
-
 package com.scrapw.chatbox
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -14,9 +8,12 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -232,12 +229,68 @@ private fun DashboardPage(vm: ChatboxViewModel) {
     }
 }
 
+/**
+ * Compact preset row:
+ * - Left: slot badge
+ * - Middle: preview of saved content (1 line)
+ * - Right: tiny Load/Save icons
+ */
+@Composable
+private fun PresetRow(
+    slot: Int,
+    preview: String,
+    onLoad: () -> Unit,
+    onSave: () -> Unit
+) {
+    Surface(
+        tonalElevation = 1.dp,
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AssistChip(
+                onClick = onLoad,
+                label = { Text("Slot $slot") }
+            )
+
+            Spacer(Modifier.width(10.dp))
+
+            Text(
+                text = if (preview.isBlank()) "Empty" else preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (preview.isBlank())
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                else
+                    MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+
+            Spacer(Modifier.width(10.dp))
+
+            IconButton(onClick = onLoad) {
+                Icon(Icons.Filled.Download, contentDescription = "Load preset")
+            }
+            IconButton(onClick = onSave) {
+                Icon(Icons.Filled.Save, contentDescription = "Save preset")
+            }
+        }
+    }
+}
+
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
     PageContainer {
+        // =======================
+        // AFK
+        // =======================
         SectionCard(
             title = "AFK (top line)",
-            subtitle = "AFK shows above Cycle + Now Playing. Forced interval. Use presets to save text."
+            subtitle = "AFK shows above Cycle + Now Playing. Presets are saved even if the app closes."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("AFK enabled")
@@ -255,14 +308,18 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("AFK text") }
             )
 
-            Text("AFK Presets:", style = MaterialTheme.typography.labelLarge)
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Text("AFK Presets (3):", style = MaterialTheme.typography.labelLarge)
+
+            // Compact list (no huge buttons)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..3).forEach { slot ->
-                    OutlinedButton(onClick = { vm.loadAfkPreset(slot) }) { Text("Load $slot") }
-                    Button(onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }) { Text("Save $slot") }
+                    val preview = vm.getAfkPresetPreview(slot)
+                    PresetRow(
+                        slot = slot,
+                        preview = preview,
+                        onLoad = { vm.loadAfkPreset(slot) },
+                        onSave = { vm.saveAfkPreset(slot, vm.afkMessage) }
+                    )
                 }
             }
 
@@ -271,32 +328,33 @@ private fun CyclePage(vm: ChatboxViewModel) {
                     onClick = { vm.startAfkSender() },
                     modifier = Modifier.weight(1f),
                     enabled = vm.afkEnabled
-                ) { Text("Start AFK") }
+                ) { Text("Start") }
 
                 OutlinedButton(
                     onClick = { vm.stopAfkSender() },
                     modifier = Modifier.weight(1f)
-                ) { Text("Stop AFK") }
+                ) { Text("Stop") }
             }
 
             OutlinedButton(
                 onClick = { vm.sendAfkNow() },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = vm.afkEnabled
-            ) { Text("Send AFK once") }
+            ) { Text("Send once (test)") }
         }
 
+        // =======================
+        // Cycle
+        // =======================
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Rotates your lines. Now Playing stays underneath automatically."
+            subtitle = "Rotates your lines. Cycle presets store BOTH lines + interval."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Cycle enabled")
                 Switch(
                     checked = vm.cycleEnabled,
-                    onCheckedChange = { enabled ->
-                        vm.setCycleEnabledFlag(enabled) // ✅ renamed, no JVM clash
-                    }
+                    onCheckedChange = { enabled -> vm.setCycleEnabledFlag(enabled) }
                 )
             }
 
@@ -308,27 +366,29 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("Lines (one per line)") }
             )
 
-            Text("Cycle Presets:", style = MaterialTheme.typography.labelLarge)
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                (1..5).forEach { slot ->
-                    OutlinedButton(onClick = { vm.loadCyclePreset(slot) }) { Text("Load $slot") }
-                    Button(onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }) { Text("Save $slot") }
-                }
-            }
-
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.setCycleIntervalSecondsFlag(it) } // ✅ renamed
+                    raw.toIntOrNull()?.let { vm.setCycleIntervalSecondsFlag(it) }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Cycle speed (seconds) (min 2)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
+
+            Text("Cycle Presets (5):", style = MaterialTheme.typography.labelLarge)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..5).forEach { slot ->
+                    val preview = vm.getCyclePresetPreview(slot)
+                    PresetRow(
+                        slot = slot,
+                        preview = preview,
+                        onLoad = { vm.loadCyclePreset(slot) },
+                        onSave = { vm.saveCyclePreset(slot, vm.cycleMessages) }
+                    )
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) { Text("Start") }
@@ -523,9 +583,7 @@ HELP
             subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 InfoTab.entries.forEach { t ->
