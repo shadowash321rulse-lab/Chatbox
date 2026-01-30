@@ -14,10 +14,12 @@ import kotlinx.coroutines.flow.map
 import java.io.IOException
 
 class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
+
     private companion object {
         const val TAG = "UserPreferencesRepo"
         const val ERROR_READ = "Error reading preferences."
 
+        // Existing
         val IP_ADDRESS = stringPreferencesKey("ip_address")
         val PORT = intPreferencesKey("port")
 
@@ -26,28 +28,34 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // Cycle persistence
+        // --- Cycle persistence ---
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // Now Playing (kept spotify naming in UI)
-        val SPOTIFY_ENABLED = booleanPreferencesKey("spotify_enabled")
-        val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
-        val SPOTIFY_DEMO = booleanPreferencesKey("spotify_demo_enabled")
+        // --- AFK persistence (TEXT ONLY) ---
+        val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // Separate refresh interval for the progress bar (re-send)
-        val MUSIC_REFRESH_INTERVAL = intPreferencesKey("music_refresh_interval_seconds")
+        // --- 3 Cycle presets (slots 1..3) ---
+        val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
+        val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
+
+        val CYCLE_PRESET_2_MESSAGES = stringPreferencesKey("cycle_preset_2_messages")
+        val CYCLE_PRESET_2_INTERVAL = intPreferencesKey("cycle_preset_2_interval")
+
+        val CYCLE_PRESET_3_MESSAGES = stringPreferencesKey("cycle_preset_3_messages")
+        val CYCLE_PRESET_3_INTERVAL = intPreferencesKey("cycle_preset_3_interval")
     }
 
-    // Network
+    // ----------------------------
+    // Existing settings
+    // ----------------------------
     val ipAddress = get(IP_ADDRESS, "127.0.0.1")
     suspend fun saveIpAddress(value: String) = save(IP_ADDRESS, value)
 
     val port = get(PORT, 9000)
     suspend fun savePort(value: Int) = save(PORT, value)
 
-    // Message options
     val isRealtimeMsg = get(MSG_REALTIME, false)
     suspend fun saveIsRealtimeMsg(value: Boolean) = save(MSG_REALTIME, value)
 
@@ -60,7 +68,9 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val isSendImmediately = get(MSG_SEND_DIRECTLY, true)
     suspend fun saveIsSendImmediately(value: Boolean) = save(MSG_SEND_DIRECTLY, value)
 
-    // Cycle
+    // ----------------------------
+    // Cycle persistence
+    // ----------------------------
     val cycleEnabled = get(CYCLE_ENABLED, false)
     suspend fun saveCycleEnabled(value: Boolean) = save(CYCLE_ENABLED, value)
 
@@ -70,20 +80,45 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val cycleInterval = get(CYCLE_INTERVAL, 3)
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
-    // Now Playing settings
-    val spotifyEnabled = get(SPOTIFY_ENABLED, false)
-    suspend fun saveSpotifyEnabled(value: Boolean) = save(SPOTIFY_ENABLED, value)
+    // ----------------------------
+    // AFK persistence (TEXT ONLY)
+    // ----------------------------
+    val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
+    suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
 
-    val spotifyPreset = get(SPOTIFY_PRESET, 1)
-    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
+    // ----------------------------
+    // Cycle Presets (3 slots)
+    // ----------------------------
+    val cyclePreset1Messages = get(CYCLE_PRESET_1_MESSAGES, "")
+    val cyclePreset1Interval = get(CYCLE_PRESET_1_INTERVAL, 3)
+    suspend fun saveCyclePreset1(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_1_MESSAGES] = messages
+            it[CYCLE_PRESET_1_INTERVAL] = intervalSeconds
+        }
+    }
 
-    val spotifyDemo = get(SPOTIFY_DEMO, false)
-    suspend fun saveSpotifyDemo(value: Boolean) = save(SPOTIFY_DEMO, value)
+    val cyclePreset2Messages = get(CYCLE_PRESET_2_MESSAGES, "")
+    val cyclePreset2Interval = get(CYCLE_PRESET_2_INTERVAL, 3)
+    suspend fun saveCyclePreset2(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_2_MESSAGES] = messages
+            it[CYCLE_PRESET_2_INTERVAL] = intervalSeconds
+        }
+    }
 
-    // Music refresh speed (progress bar refresh)
-    val musicRefreshInterval = get(MUSIC_REFRESH_INTERVAL, 1)
-    suspend fun saveMusicRefreshInterval(value: Int) = save(MUSIC_REFRESH_INTERVAL, value)
+    val cyclePreset3Messages = get(CYCLE_PRESET_3_MESSAGES, "")
+    val cyclePreset3Interval = get(CYCLE_PRESET_3_INTERVAL, 3)
+    suspend fun saveCyclePreset3(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_3_MESSAGES] = messages
+            it[CYCLE_PRESET_3_INTERVAL] = intervalSeconds
+        }
+    }
 
+    // ----------------------------
+    // helpers
+    // ----------------------------
     private fun <T> get(key: Preferences.Key<T>, defaultValue: T): Flow<T> {
         return dataStore.data
             .catch {
@@ -94,10 +129,10 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
                     throw it
                 }
             }
-            .map { preferences -> preferences[key] ?: defaultValue }
+            .map { prefs -> prefs[key] ?: defaultValue }
     }
 
     private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
-        dataStore.edit { preferences -> preferences[key] = value }
+        dataStore.edit { prefs -> prefs[key] = value }
     }
 }
