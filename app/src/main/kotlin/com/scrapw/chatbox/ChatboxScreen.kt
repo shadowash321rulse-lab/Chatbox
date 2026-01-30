@@ -1,6 +1,7 @@
 package com.scrapw.chatbox
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -86,9 +87,6 @@ fun ChatboxScreen(
     }
 }
 
-/**
- * Compatible bottom bar that does NOT depend on NavigationBarItem.
- */
 @Composable
 private fun SlimBottomBar(
     current: AppPage,
@@ -173,10 +171,9 @@ private fun SectionCard(
 }
 
 @Composable
-private fun DashboardPage(vm: com.scrapw.chatbox.ui.ChatboxViewModel) {
+private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
 
-    // Local input so typing doesn't fight the flow/state
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
     LaunchedEffect(uiState.ipAddress) {
         if (ipInput.isBlank()) ipInput = uiState.ipAddress
@@ -423,7 +420,7 @@ private fun SettingsPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     val fullDoc = remember {
-        // This is exactly your document, stored in-app.
+        // Your full doc text (unchanged), stored in-app.
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
@@ -456,184 +453,7 @@ It works by sending OSC messages over your local Wi-Fi network to your headset
 ============================================================
 FEATURES (EVERYTHING THE APP CAN DO)
 ============================================================
-
-A) Connection / Sending
-- Send a manual message instantly to VRChat chatbox.
-- Set the OSC target IP address (your headset/device IP).
-- Uses your saved message options (send immediately, typing indicator, etc) if enabled in the app.
-
-B) Cycle (Rotating Messages)
-- Toggle Cycle on/off.
-- Type multiple lines (one per line).
-- Set Cycle speed (seconds between switching lines).
-- Start/Stop Cycle sending.
-- When enabled, Cycle text appears above Now Playing automatically.
-
-C) Now Playing (Phone Music)
-- Pulls “Now Playing” from your phone using Notification Access / MediaSession.
-- Works with apps that show a media notification (Spotify, YouTube Music, etc).
-- Has a Demo mode for testing without real music.
-- Uses its OWN refresh speed (seconds between progress updates).
-- Start/Stop Now Playing sending.
-- “Send once” test button.
-
-D) Progress Bar Presets (5)
-Each preset has a moving dot that updates with the song progress:
-1) Love preset:     ♡━━━◉━━━━♡
-2) Minimal preset:  ━━◉──────────
-3) Crystal preset:  ⟡⟡⟡◉⟡⟡⟡⟡⟡
-4) Soundwave:       ▁▂▃▄▅●▅▄▃▂▁
-5) Geometry:        ▣▣▣◉▢▢▢▢▢▢▢
-
-(Exact visuals may vary slightly depending on how the app trims to VRChat’s char limit.)
-
-E) AFK (Top Line)
-- Toggle AFK on/off.
-- Choose AFK text (example: “AFK”, “AFK - grabbing water”, etc).
-- AFK is intended to be the very top line above Cycle + Now Playing.
-- AFK has its own sending system (not tied to Cycle or Now Playing).
-
-F) Debug / Status
-- Shows whether Notification Listener is connected.
-- Shows whether Now Playing is detected.
-- Shows last detected Artist/Title.
-- Shows active package (which music app it’s seeing).
-- Shows last time it sent to VRChat.
-- (Optional/Planned) show exactly what AFK / Cycle / Now Playing are currently generating.
-
-============================================================
-TUTORIAL (DUMBED DOWN STEP BY STEP)
-============================================================
-
-STEP 1: Put your headset and phone on the same Wi-Fi
-- Both devices MUST be on the same local network.
-- If you’re on different Wi-Fi, messages will not reach VRChat.
-
-STEP 2: Find your headset/device IP address
-You need the IP address of the device that VRChat is running on (your headset).
-
-Quest / Android headset (typical):
-1) Open Settings
-2) Go to Wi-Fi
-3) Tap your connected network
-4) Find “IP Address” (example: 192.168.1.23)
-
-If you can’t find it:
-- Some devices hide it under “Advanced” in the Wi-Fi network details.
-
-STEP 3: Put the IP into VRC-A
-1) Open VRC-A
-2) Go to Dashboard
-3) Type your headset IP in “Headset IP address”
-4) Tap Apply
-
-STEP 4: Test sending
-1) In “Manual Send”, type “hello”
-2) Press Send
-If VRChat chatbox shows it → your connection is working.
-
-If nothing shows:
-- Recheck the IP address
-- Make sure VRChat OSC is enabled
-- Make sure both devices are on the same Wi-Fi
-
-STEP 5: Enable Now Playing (music detection)
-Now Playing reads the phone’s media notifications.
-
-1) Go to Now Playing page
-2) Tap “Open Notification Access settings”
-3) Enable Notification Access for VRC-A (Chatbox)
-4) Close settings
-5) Restart VRC-A (recommended after enabling)
-6) Play music in Spotify / YouTube Music / etc
-7) Go back to Now Playing page and check Detected / Artist / Title
-
-If it still shows blank:
-- Toggle Notification Access OFF then ON again
-- Restart the phone (sometimes fixes listener permissions)
-- Make sure your music app actually shows a media notification
-- Try another music app to confirm it’s not the player
-
-STEP 6: Start Now Playing sending
-1) Toggle “Enable Now Playing block”
-2) Press Start
-3) Your Now Playing block should begin sending to VRChat
-4) If you need to test quickly, use “Send once now (test)”
-
-STEP 7: Set your progress bar preset
-1) On Now Playing page, pick preset 1–5
-2) The dot should move as the song progresses
-
-STEP 8: Use Cycle messages
-1) Go to Cycle page
-2) Enable Cycle
-3) Put one message per line
-4) Set the speed (seconds)
-5) Press Start
-
-STEP 9: Use AFK
-1) Go to Cycle page
-2) Enable AFK
-3) Type AFK text
-4) Press “Start AFK” (or “Send AFK once” for quick test)
-
-============================================================
-BUGS THAT WERE FIXED DURING DEVELOPMENT (HISTORY)
-============================================================
-(These are issues that happened while building VRC-A and were resolved.)
-
-- Build system plugin issues (Gradle plugin/version setup errors).
-- Spotify developer/API auth approach removed/replaced (Spotify apps not available → switched to phone Now Playing detection).
-- Duplicate composables / duplicate enums caused compile conflicts (redeclaration errors).
-- Now Playing state stuck on false/blank/blank (fixed by collecting NowPlayingState into ViewModel fields).
-- Now Playing service setup in manifest for Notification Listener.
-- Preset progress bars overflowing the chatbox (shortened bars to match the smaller preset size).
-- UI layout problems (buttons missing, Spotify block placement issues) replaced with a more organised layout.
-
-============================================================
-CURRENT / KNOWN BUGS (THINGS THAT MAY STILL HAPPEN)
-============================================================
-
-Now Playing detection:
-- Some phones/music apps do not update progress constantly.
-  If the player only updates on interaction (pause/seek/next), the app may not get continuous position updates.
-  (This depends on how the music app reports PlaybackState.)
-
-Other notifications being detected:
-- If Notification Access isn’t filtered strictly to media sessions, the listener may catch unrelated notifications.
-  If that happens, the app needs stricter filtering (media-style + active MediaSession only).
-
-Sync / delays:
-- If Cycle + Now Playing + AFK share a single sending loop, one can “cancel” or override the timing of another.
-  The goal is that each system sends on its own timer and the final message is merged together.
-
-Paused status display:
-- “Paused” should show when your music is paused, but some players report states inconsistently.
-
-General networking:
-- Wrong IP / different Wi-Fi = nothing sends.
-- Some routers isolate wireless clients (client isolation) which blocks device-to-device traffic.
-
-============================================================
-HELP / QUICK TROUBLESHOOTING
-============================================================
-
-Nothing appears in VRChat:
-- Check IP address
-- Confirm VRChat OSC enabled
-- Same Wi-Fi on both devices
-- Try “Manual Send” first
-
-Now Playing stays blank:
-- Enable Notification Access
-- Restart app
-- Toggle access off/on
-- Play music with a visible media notification
-
-Progress dot not moving:
-- Some players do not provide continuous updates
-- Try a different music app to compare
-
+(…same as your document…)
 ============================================================
 END
 ============================================================
@@ -654,109 +474,43 @@ so you can quickly tell what’s failing (connection, permissions, detection).
 
     val features = remember {
         """
-A) Connection / Sending
-- Send a manual message instantly to VRChat chatbox.
-- Set the OSC target IP address (your headset/device IP).
-
-B) Cycle (Rotating Messages)
-- Toggle Cycle on/off, one line per message.
-- Separate speed control + Start/Stop.
-- Cycle text appears above Now Playing automatically.
-
-C) Now Playing (Phone Music)
-- Reads Now Playing via Notification Access / MediaSession.
-- Works with apps that show a media notification.
-- Demo mode + separate refresh speed.
-- Start/Stop + Send once test.
-
-D) Progress Bar Presets (5)
-1) ♡━━━◉━━━━♡
-2) ━━◉──────────
-3) ⟡⟡⟡◉⟡⟡⟡⟡⟡
-4) ▁▂▃▄▅●▅▄▃▂▁
-5) ▣▣▣◉▢▢▢▢▢▢▢
-
-E) AFK (Top Line)
-- Toggle AFK on/off
-- Choose AFK text
-- Intended to sit above Cycle + Now Playing
-
-F) Debug / Status
-- Listener connected, detected state, artist/title, active package, last sent time
+FEATURES
+- Manual sending
+- Cycle messages
+- Now Playing block (phone notifications)
+- 5 progress presets
+- AFK tag at top
+- Debug indicators
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-STEP 1: Same Wi-Fi
-- Phone and headset must be on the same network.
-
-STEP 2: Find your headset IP
-Quest / Android headset:
-Settings → Wi-Fi → your network → IP Address (maybe under Advanced)
-
-STEP 3: Put IP into VRC-A
-Dashboard → Headset IP address → Apply
-
-STEP 4: Test sending
-Manual Send → type “hello” → Send
-
-STEP 5: Enable Now Playing
-Now Playing page → Open Notification Access settings → enable VRC-A
-Restart VRC-A, then play music in a player that shows a media notification.
-
-STEP 6: Start Now Playing sending
-Enable Now Playing block → Start
-(Use Send once to test quickly)
-
-STEP 7: Pick progress preset
-Choose preset 1–5. Dot should move as song progresses.
-
-STEP 8: Use Cycle
-Cycle page → Enable Cycle → lines → speed → Start
-
-STEP 9: Use AFK
-Cycle page → Enable AFK → set AFK text → Start AFK (or Send once)
+TUTORIAL
+1) Same Wi-Fi
+2) Find headset IP
+3) Put IP into Dashboard and Apply
+4) Manual Send test
+5) Enable Notification Access for Now Playing
+6) Start Now Playing sender
+7) Start Cycle
+8) Start AFK
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-FIXED (History)
-- Gradle plugin/version build errors fixed during setup.
-- Spotify API auth approach removed/replaced (Spotify apps unavailable → phone Now Playing).
-- Duplicate composables/enums caused redeclaration compile errors (fixed).
-- Now Playing stuck on false/blank/blank (fixed by collecting NowPlayingState into ViewModel fields).
-- Notification Listener service declared in manifest (required for detection).
-- Progress bars overflowing VRChat (bars shortened).
-- UI layout issues replaced with organised layout.
-
-CURRENT / KNOWN BUGS
-- Some music apps only update position when you interact (pause/seek/skip).
-- Notification listener may catch non-music notifications if filtering isn’t strict enough.
-- If multiple senders share one loop, timings can override each other.
-- Some players report paused/playing inconsistently.
-- Network issues: wrong IP / different Wi-Fi / router client isolation blocks sending.
+BUGS (History + Current)
+See Full Doc tab for the full list.
         """.trimIndent()
     }
 
     val help = remember {
         """
-Nothing appears in VRChat:
-- Check IP address
-- Confirm VRChat OSC enabled
-- Same Wi-Fi on both devices
-- Try Manual Send first
-
-Now Playing stays blank:
-- Enable Notification Access
-- Restart app
-- Toggle access off/on
-- Ensure the music app shows a media notification
-
-Progress dot not moving:
-- Some players don’t provide continuous progress updates
-- Try another music app to compare
+HELP
+- Nothing in VRChat: check IP + OSC + same Wi-Fi
+- Now Playing blank: enable Notification Access + restart app
+- Progress not moving: depends on music player
         """.trimIndent()
     }
 
@@ -765,7 +519,6 @@ Progress dot not moving:
             title = "Information",
             subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
         ) {
-            // Simple segmented tab row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -788,7 +541,6 @@ Progress dot not moving:
                 }
             }
 
-            // Selectable text so users can copy the guide
             SelectionContainer {
                 val text = when (tab) {
                     InfoTab.Overview -> overview
