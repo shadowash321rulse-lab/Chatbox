@@ -202,14 +202,13 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // SEND COORDINATOR (prevents “cancel each other out” + spam cutouts)
+    // SEND COORDINATOR
     // =========================================================
-    private val MIN_SEND_COOLDOWN_MS = 2_000L // never allow faster than this
+    private val MIN_SEND_COOLDOWN_MS = 2_000L
     private var lastSendAtMs: Long = 0L
     private var sendCoordinatorJob: Job? = null
     private val sendRequested = AtomicBoolean(false)
 
-    // Debug: “what each module is generating”
     var debugLastAfkOsc by mutableStateOf("")
     var debugLastCycleOsc by mutableStateOf("")
     var debugLastMusicOsc by mutableStateOf("")
@@ -219,16 +218,11 @@ class ChatboxViewModel(
     // AFK
     // =========================================================
     var afkEnabled by mutableStateOf(false)
-
-    // text persists, toggle does NOT persist
     var afkMessage by mutableStateOf("AFK 🌙 back soon")
-
-    // forced interval (no UI control)
     private val AFK_FORCED_INTERVAL_SEC = 15
     private var afkJob: Job? = null
     private var afkRunning by mutableStateOf(false)
 
-    // Preset previews (3)
     private val afkPresetPreview = Array(3) { "" }
     fun getAfkPresetPreview(slot: Int): String {
         val i = slot.coerceIn(1, 3) - 1
@@ -261,7 +255,7 @@ class ChatboxViewModel(
         afkRunning = false
         afkJob?.cancel()
         afkJob = null
-        requestCombinedSend(immediate = true) // clears AFK line
+        requestCombinedSend(immediate = true)
     }
 
     fun sendAfkNow() {
@@ -269,7 +263,6 @@ class ChatboxViewModel(
         requestCombinedSend(immediate = true)
     }
 
-    // IMPORTANT: only ONE saveAfkPreset() to avoid overload clash
     fun saveAfkPreset(slot: Int, text: String) {
         viewModelScope.launch {
             userPreferencesRepository.saveAfkPreset(slot.coerceIn(1, 3), text)
@@ -297,7 +290,6 @@ class ChatboxViewModel(
     private var cycleRunning by mutableStateOf(false)
     private var cycleCurrentLine by mutableStateOf("")
 
-    // UI helper setters (your UI was calling these)
     fun setCycleEnabledFlag(enabled: Boolean) {
         cycleEnabled = enabled
         viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(enabled) }
@@ -310,7 +302,6 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.saveCycleInterval(s) }
     }
 
-    // Preset previews (5)
     private val cyclePresetPreview = Array(5) { "(empty)" }
     fun getCyclePresetPreview(slot: Int): String {
         val i = slot.coerceIn(1, 5) - 1
@@ -401,7 +392,6 @@ class ChatboxViewModel(
     private var nowPlayingRunning by mutableStateOf(false)
 
     init {
-        // Load persisted text (toggle states intentionally not persisted)
         viewModelScope.launch {
             afkMessage = userPreferencesRepository.afkMessage.first()
             cycleMessages = userPreferencesRepository.cycleMessages.first()
@@ -410,7 +400,6 @@ class ChatboxViewModel(
             refreshPresetPreviews()
         }
 
-        // Bind NowPlayingState -> ViewModel fields
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -430,13 +419,11 @@ class ChatboxViewModel(
     }
 
     private suspend fun refreshPresetPreviews() {
-        // AFK previews
         for (i in 1..3) {
             val t = userPreferencesRepository.getAfkPresetOnce(i)
             afkPresetPreview[i - 1] = t
         }
 
-        // Cycle previews (show first line + interval)
         for (i in 1..5) {
             val (msgs, interval) = userPreferencesRepository.getCyclePresetOnce(i)
             val first = msgs.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() } ?: "(empty)"
@@ -504,9 +491,8 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // COMBINED OUTPUT (AFK top, Cycle middle, Music bottom)
+    // COMBINED OUTPUT
     // =========================================================
-
     private fun computeEffectivePositionMs(): Long {
         val base = nowPlayingPositionMs
         val dur = nowPlayingDurationMs
@@ -603,54 +589,80 @@ class ChatboxViewModel(
     }
 
     private fun sendCombinedToVrchat(text: String, local: Boolean = false) {
-        // If everything empty -> send " " to clear instead of leaving stale text
         val payload = if (text.isBlank()) " " else text
         sendToVrchatRaw(payload, local, addToConversation = false)
         lastSendAtMs = System.currentTimeMillis()
     }
 
     // =========================================================
-    // PROGRESS BAR PRESETS
+    // ✅ PROGRESS BAR PRESETS (RESTORED TO ORIGINAL LOOKS)
     // =========================================================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
+        fun idx(slots: Int): Int = (p * (slots - 1)).toInt().coerceIn(0, slots - 1)
+
         return when (preset.coerceIn(1, 5)) {
+            // 1) Love: ♡━━━◉━━━━♡  (8 slots between hearts)
             1 -> {
-                val innerSlots = 8
-                val idx = (p * (innerSlots - 1)).toInt()
-                val inner = CharArray(innerSlots) { '━' }
-                inner[idx] = '◉'
-                "♡" + inner.concatToString() + "♡"
+                val slots = 8
+                val i = idx(slots)
+                val arr = CharArray(slots) { '━' }
+                arr[i] = '◉'
+                "♡" + arr.concatToString() + "♡"
             }
+
+            // 2) Minimal: ━━◉────────── (13 total slots)
             2 -> {
-                val slots = 10
-                val idx = (p * (slots - 1)).toInt()
-                val bg = CharArray(slots) { '─' }
-                bg[idx] = '◉'
-                bg.concatToString()
+                val slots = 13
+                val i = idx(slots)
+                val arr = CharArray(slots) { '─' }
+                // keep the “━” leading vibe like the original
+                if (slots >= 2) {
+                    arr[0] = '━'
+                    arr[1] = '━'
+                }
+                arr[i] = '◉'
+                arr.concatToString()
             }
+
+            // 3) Crystal: ⟡⟡⟡◉⟡⟡⟡⟡⟡ (9 slots)
             3 -> {
-                val slots = 10
-                val idx = (p * (slots - 1)).toInt()
-                val bg = CharArray(slots) { '⟡' }
-                bg[idx] = '◉'
-                bg.concatToString()
+                val slots = 9
+                val i = idx(slots)
+                val arr = CharArray(slots) { '⟡' }
+                arr[i] = '◉'
+                arr.concatToString()
             }
+
+            // 4) Soundwave: ▁▂▃▄▅●▅▄▃▂▁ (11 slots)
             4 -> {
-                val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
-                val idx = (p * (bg.size - 1)).toInt()
-                val out = bg.copyOf()
-                out[idx] = '●'
+                val base = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁','▁')
+                // ^ using 11 slots: [▁▂▃▄▅▅▄▃▂▁▁] still looks wavey
+                // but original is ▁▂▃▄▅●▅▄▃▂▁ (also 11)
+                // We'll use the original exact pattern instead:
+                val original = charArrayOf('▁','▂','▃','▄','▅','▅','▅','▄','▃','▂','▁')
+                val slots = original.size
+                val i = idx(slots)
+                val out = original.copyOf()
+                out[i] = '●'
                 out.concatToString()
             }
+
+            // 5) Geometry: ▣▣▣◉▢▢▢▢▢▢▢ (11 slots)
             else -> {
-                val bg = charArrayOf('▣','▣','▣','▢','▢','▢','▢','▢','▢','▢')
-                val idx = (p * (bg.size - 1)).toInt()
-                val out = bg.copyOf()
-                out[idx] = '◉'
-                out.concatToString()
+                val slots = 11
+                val i = idx(slots)
+                val arr = CharArray(slots) { '▢' }
+                // first 3 are filled blocks like the original
+                if (slots >= 3) {
+                    arr[0] = '▣'
+                    arr[1] = '▣'
+                    arr[2] = '▣'
+                }
+                arr[i] = '◉'
+                arr.concatToString()
             }
         }
     }
