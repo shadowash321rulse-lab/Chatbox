@@ -77,7 +77,7 @@
     <string name="send_to_localhost">Send to localhost</string>
     <string name="send_to_localhost_desc">Sends OSC to localhost (useful for testing).</string>
 
-    <!-- Settings: extra toggles (these were missing and got stripped) -->
+    <!-- Settings: extra toggles -->
     <string name="fullscreen">Fullscreen</string>
     <string name="fullscreen_desc">Use a fullscreen layout (hides system bars where possible).</string>
 
@@ -89,9 +89,10 @@
     <string name="button_haptic">Button haptics</string>
     <string name="button_haptic_desc">Vibrate a little when pressing buttons.</string>
 
-    <!-- About / Dependencies (even if you later remove the menu, code still references these right now) -->
+    <!-- Information (kept as strings even if UI removes pages) -->
     <string name="information">Information</string>
     <string name="about">About</string>
+    <string name="faq">FAQ</string>
     <string name="dependencies">Dependencies</string>
 
     <!-- About screen strings -->
