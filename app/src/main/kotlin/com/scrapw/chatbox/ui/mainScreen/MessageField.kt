@@ -3,6 +3,7 @@ package com.scrapw.chatbox.ui.mainScreen
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +22,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PaddingValues
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -47,7 +47,7 @@ fun MessageField(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // ============================
-        // AFK (top line)
+        // AFK (top)
         // ============================
         ElevatedCard {
             Column(
@@ -83,7 +83,7 @@ fun MessageField(
         }
 
         // ============================
-        // Cycle controls
+        // Cycle
         // ============================
         ElevatedCard {
             Column(
@@ -249,9 +249,7 @@ fun MessageField(
                 OutlinedButton(
                     onClick = { chatboxViewModel.sendNowPlayingOnce() },
                     modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Send once now (test)")
-                }
+                ) { Text("Send once now (test)") }
 
                 Text(
                     "Detected: ${chatboxViewModel.nowPlayingDetected} • " +
@@ -262,7 +260,7 @@ fun MessageField(
         }
 
         // ============================
-        // Manual message send (simple)
+        // Manual message send
         // ============================
         ElevatedCard {
             Row(
