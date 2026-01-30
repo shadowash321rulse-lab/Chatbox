@@ -4,17 +4,17 @@
     <!-- App -->
     <string name="app_name">VRC-A</string>
 
-    <!-- Common / App Bar -->
+    <!-- Common buttons / labels -->
     <string name="back_button">Back</string>
     <string name="settings_button">Settings</string>
 
     <!-- Overlay -->
-    <string name="overlay_permission_request">Overlay permission required</string>
+    <string name="overlay_permission_request">Please allow “Display over other apps” so the overlay can work.</string>
     <string name="open_chatbox">Open VRC-A</string>
     <string name="overlay_unlock_messenger">Unlock</string>
     <string name="overlay_lock_messenger">Lock</string>
 
-    <!-- Conversation / Messages -->
+    <!-- Conversation -->
     <string name="stashed">Stashed</string>
     <string name="empty_conversation">No messages yet.</string>
     <string name="message_card_copy">Copy</string>
@@ -23,77 +23,57 @@
     <!-- IP / OSC -->
     <string name="osc_host">OSC Host</string>
     <string name="ip_address">IP Address</string>
-    <string name="enter_your_ip_here">Enter your IP here</string>
-    <string name="apply_ip_address">Apply</string>
-    <string name="edit_ip_address">Edit</string>
+    <string name="enter_your_ip_here">Enter your headset IP here</string>
+    <string name="apply_ip_address">Apply IP</string>
+    <string name="edit_ip_address">Edit IP</string>
     <string name="port">Port</string>
 
-    <!-- Settings: Overlay / Layout -->
-    <string name="floating_button">Floating Button</string>
-    <string name="enable_chatbox_floating_button">Enable floating button</string>
-    <string name="it_can_help_to_send_chatbox_in_vrchat_mobile_desc">
-        Shows a small overlay button to quickly open VRC-A while in VRChat.
-    </string>
-
-    <string name="keep_conversation_overlay_open">Keep overlay open</string>
-    <string name="keep_conversation_overlay_open_desc">
-        Keeps the conversation overlay visible after sending.
-    </string>
-
-    <string name="send_to_localhost">Send to localhost</string>
-    <string name="send_to_localhost_desc">
-        Sends OSC messages to 127.0.0.1 (useful for testing).
-    </string>
-
-    <!-- Settings: Message options -->
+    <!-- Message options -->
     <string name="message">Message</string>
 
     <string name="real_time_sending">Real-time sending</string>
-    <string name="real_time_sending_desc">
-        Sends text as you type (instead of only when pressing send).
-    </string>
+    <string name="real_time_sending_desc">Updates the chatbox while you type (instead of only when sending).</string>
+    <string name="msg_real_time_long">Send chatbox updates while typing</string>
+    <string name="msg_real_time_short">Real-time</string>
 
     <string name="trigger_notification_sound">Trigger notification sound</string>
-    <string name="trigger_notification_sound_desc">
-        Plays VRChat notification sound when sending (if supported).
-    </string>
-
-    <string name="show_message_typing_indicator">Typing indicator</string>
-    <string name="show_message_typing_indicator_desc">
-        Shows typing indicator while you type.
-    </string>
-
-    <string name="send_message_directly">Send immediately</string>
-    <string name="send_message_directly_desc">
-        Sends without requiring confirmation in VRChat (if available).
-    </string>
-
-    <!-- The “long/short” helper strings referenced in MessageOption.kt -->
-    <string name="msg_real_time_long">Send as you type</string>
-    <string name="msg_real_time_short">Realtime</string>
-
-    <string name="msg_trigger_notification_sfx_long">Play notification sound on send</string>
+    <string name="trigger_notification_sound_desc">Plays VRChat’s notification sound when sending.</string>
+    <string name="msg_trigger_notification_sfx_long">Play notification sound</string>
     <string name="msg_trigger_notification_sfx_short">SFX</string>
 
-    <string name="msg_typing_indicator_long">Show typing indicator while typing</string>
+    <string name="show_message_typing_indicator">Typing indicator</string>
+    <string name="show_message_typing_indicator_desc">Shows typing on/off when not using real-time sending.</string>
+    <string name="msg_typing_indicator_long">Show typing indicator</string>
     <string name="msg_typing_indicator_short">Typing</string>
 
-    <string name="msg_send_immediately_long">Send instantly (no extra step)</string>
-    <string name="msg_send_immediately_short">Instant</string>
+    <string name="send_message_directly">Send directly</string>
+    <string name="send_message_directly_desc">Sends instantly instead of “stashing” first.</string>
+    <string name="msg_send_immediately_long">Send immediately</string>
+    <string name="msg_send_immediately_short">Direct</string>
 
-    <!-- Settings: Layout / Accessibility / Info sections -->
+    <!-- Settings: Floating button / overlay -->
+    <string name="floating_button">Floating button</string>
+    <string name="enable_chatbox_floating_button">Enable floating button</string>
+    <string name="it_can_help_to_send_chatbox_in_vrchat_mobile_desc">Shows a small overlay button for quick access.</string>
+
+    <string name="keep_conversation_overlay_open">Keep conversation overlay open</string>
+    <string name="keep_conversation_overlay_open_desc">Keeps the overlay conversation open after sending.</string>
+
+    <string name="send_to_localhost">Send to localhost</string>
+    <string name="send_to_localhost_desc">Sends OSC to localhost (useful for testing).</string>
+
+    <!-- Settings: Layout -->
     <string name="layout">Layout</string>
     <string name="display_ip_edit_bar">Show IP edit bar</string>
     <string name="display_message_options">Show message options</string>
 
+    <!-- Settings: Accessibility -->
     <string name="accessibility">Accessibility</string>
     <string name="button_haptic">Button haptics</string>
-    <string name="button_haptic_desc">Vibrate slightly when pressing buttons.</string>
+    <string name="button_haptic_desc">Vibrate a little when pressing buttons.</string>
 
+    <!-- Settings: Info / About / FAQ (these can exist even if you later hide the pages) -->
     <string name="information">Information</string>
-
-    <!-- You asked to remove About/FAQ from settings, but these strings were referenced.
-         Keeping them here prevents build breaks even if you later remove the UI. -->
     <string name="faq">FAQ</string>
 
     <!-- About screen strings -->
@@ -104,7 +84,7 @@
     <string name="license">License</string>
     <string name="download_latest_version">Download latest version</string>
 
-    <!-- Updates -->
+    <!-- Update -->
     <string name="update_available">Update available</string>
 
 </resources>
