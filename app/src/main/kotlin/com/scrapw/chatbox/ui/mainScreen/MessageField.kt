@@ -2,8 +2,8 @@ package com.scrapw.chatbox.ui.mainScreen
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,8 +28,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
 
@@ -121,8 +119,8 @@ fun MessageField(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Cycle speed (seconds)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    label = { Text("Cycle speed (seconds)") }
+                    // NOTE: no KeyboardOptions here to avoid build issues
                 )
 
                 Row(
@@ -151,7 +149,7 @@ fun MessageField(
         }
 
         // ============================
-        // Now Playing (phone music)
+        // Now Playing
         // ============================
         ElevatedCard {
             Column(
@@ -196,8 +194,8 @@ fun MessageField(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Music refresh speed (seconds)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    label = { Text("Music refresh speed (seconds)") }
+                    // NOTE: no KeyboardOptions here to avoid build issues
                 )
 
                 Row(
@@ -260,7 +258,7 @@ fun MessageField(
         }
 
         // ============================
-        // Manual message send
+        // Manual send
         // ============================
         ElevatedCard {
             Row(
