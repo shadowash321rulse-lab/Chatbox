@@ -1,116 +1,68 @@
 package com.scrapw.chatbox
 
-import androidx.annotation.StringRes
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
-import com.scrapw.chatbox.data.SettingsStates
 import com.scrapw.chatbox.ui.ChatboxViewModel
-import com.scrapw.chatbox.ui.common.ChatboxAppBar
-import com.scrapw.chatbox.ui.common.SetFullscreen
 import com.scrapw.chatbox.ui.mainScreen.MainScreen
-import com.scrapw.chatbox.ui.settingsScreen.AboutScreen
-import com.scrapw.chatbox.ui.settingsScreen.DependenciesScreen
 import com.scrapw.chatbox.ui.settingsScreen.SettingsScreen
 
-
-enum class ChatboxScreen(@StringRes val title: Int) {
-    Main(title = R.string.app_name),
-    Settings(title = R.string.settings),
-    About(title = R.string.about),
-    Dependencies(title = R.string.dependencies)
-}
+private enum class AppPage { Main, Settings }
 
 @Composable
-fun ChatboxApp(
+fun ChatboxScreen(
     modifier: Modifier = Modifier,
-    chatboxViewModel: ChatboxViewModel =
-        if (!ChatboxViewModel.isInstanceInitialized()) {
-            viewModel(
-                factory = ChatboxViewModel.Factory
-            )
-        } else {
-            ChatboxViewModel.getInstance()
-        },
-    navController: NavHostController = rememberNavController()
-
+    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory)
 ) {
-    chatboxViewModel.checkUpdate()
-
-    val fullscreenState = SettingsStates.fullscreenState()
-
-    val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentScreen = ChatboxScreen.valueOf(
-        backStackEntry?.destination?.route ?: ChatboxScreen.Main.name
-    )
-
-    SetFullscreen(fullscreenState.value && currentScreen == ChatboxScreen.Main)
-
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    var page by remember { mutableStateOf(AppPage.Main) }
 
     Scaffold(
         topBar = {
-            //TODO: Animation Fix
-            ChatboxAppBar(
-                currentScreen = currentScreen,
-                canNavigateBack = navController.previousBackStackEntry != null,
-                navigateUp = { navController.navigateUp() },
-                scrollBehavior = scrollBehavior,
-                navigateToSettings = { navController.navigate(ChatboxScreen.Settings.name) }
+            TopAppBar(
+                title = {
+                    Text(
+                        text = if (page == AppPage.Main) "VRC-A" else "Settings",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                navigationIcon = {
+                    if (page == AppPage.Settings) {
+                        IconButton(onClick = { page = AppPage.Main }) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                },
+                actions = {
+                    if (page == AppPage.Main) {
+                        IconButton(onClick = { page = AppPage.Settings }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors()
             )
-        },
-        // When LazyColumn have animateItemPlacement() item, nestedScroll will conflict with it.
-        modifier = if (currentScreen != ChatboxScreen.Main) {
-            Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
-        } else {
-            Modifier
         }
-    ) { innerPadding ->
-        val messengerUiState by chatboxViewModel.messengerUiState.collectAsState()
+    ) { padding ->
+        when (page) {
+            AppPage.Main -> MainScreen(
+                modifier = modifier,
+                chatboxViewModel = chatboxViewModel
+            )
 
-
-        NavHost(
-            navController = navController,
-            startDestination = ChatboxScreen.Main.name,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            composable(route = ChatboxScreen.Main.name) {
-                MainScreen(
-                    modifier = modifier,
-                    chatboxViewModel = chatboxViewModel,
-                    uiState = messengerUiState
-                )
-            }
-            composable(route = ChatboxScreen.Settings.name) {
-                SettingsScreen(
-                    chatboxViewModel = chatboxViewModel,
-                    navController = navController
-                )
-            }
-            composable(route = ChatboxScreen.About.name) {
-                AboutScreen(
-                    chatboxViewModel = chatboxViewModel,
-                    navController = navController
-                )
-            }
-            composable(route = ChatboxScreen.Dependencies.name) {
-                DependenciesScreen()
-            }
+            AppPage.Settings -> SettingsScreen(
+                chatboxViewModel = chatboxViewModel,
+                modifier = modifier
+            )
         }
     }
 }
-
