@@ -6,9 +6,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BookmarkAdd
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PauseCircleFilled
 import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,11 +43,10 @@ fun MessageField(
                 }
 
                 when (tab) {
+
                     TabPage.Cycle -> {
-                        Column(
-                            Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Enable Cycle", style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.weight(1f))
@@ -55,32 +54,23 @@ fun MessageField(
                                     checked = chatboxViewModel.cycleEnabled,
                                     onCheckedChange = {
                                         chatboxViewModel.cycleEnabled = it
-                                        if (!it) chatboxViewModel.stopAll()
+                                        if (!it) chatboxViewModel.stopCycle()
                                     }
                                 )
                             }
 
-                            // NEW: AFK toggle button (chip)
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text("Status", style = MaterialTheme.typography.labelLarge)
-                                FilterChip(
-                                    selected = chatboxViewModel.afkEnabled,
-                                    onClick = { chatboxViewModel.afkEnabled = !chatboxViewModel.afkEnabled },
-                                    label = { Text("AFK") }
-                                )
+                            // AFK toggle (requested)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("AFK", style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.weight(1f))
-                                if (chatboxViewModel.afkEnabled) {
-                                    Text("Enabled", style = MaterialTheme.typography.bodySmall)
-                                } else {
-                                    Text("Off", style = MaterialTheme.typography.bodySmall)
-                                }
+                                Switch(
+                                    checked = chatboxViewModel.afkEnabled,
+                                    onCheckedChange = { chatboxViewModel.afkEnabled = it }
+                                )
                             }
 
                             if (chatboxViewModel.cycleEnabled) {
+
                                 TextField(
                                     value = chatboxViewModel.cycleMessages,
                                     onValueChange = { chatboxViewModel.cycleMessages = it },
@@ -93,11 +83,13 @@ fun MessageField(
                                 TextField(
                                     value = chatboxViewModel.cycleIntervalSeconds.toString(),
                                     onValueChange = { raw ->
-                                        raw.toIntOrNull()?.let { n -> chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1) }
+                                        raw.toIntOrNull()?.let { n ->
+                                            chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1)
+                                        }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
-                                    placeholder = { Text("Cycle speed: seconds between switching lines") }
+                                    placeholder = { Text("Cycle speed (seconds)") }
                                 )
 
                                 Row(
@@ -115,7 +107,7 @@ fun MessageField(
                                     }
 
                                     OutlinedButton(
-                                        onClick = { chatboxViewModel.stopAll() },
+                                        onClick = { chatboxViewModel.stopCycle() },
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Icon(Icons.Filled.PauseCircleFilled, contentDescription = null)
@@ -125,7 +117,7 @@ fun MessageField(
                                 }
                             } else {
                                 Text(
-                                    "Turn on Cycle to send rotating messages. Now Playing (if enabled) will be placed under it automatically.",
+                                    "Turn on Cycle to rotate messages.\nNow Playing (if enabled) will be placed under it automatically.",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -133,10 +125,7 @@ fun MessageField(
                     }
 
                     TabPage.NowPlaying -> {
-                        Column(
-                            Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Now Playing block (phone music)", style = MaterialTheme.typography.titleMedium)
 
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -160,15 +149,19 @@ fun MessageField(
                             TextField(
                                 value = chatboxViewModel.musicRefreshSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1) }
+                                    raw.toIntOrNull()?.let { n ->
+                                        chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
-                                placeholder = { Text("Music refresh: seconds between progress updates") }
+                                placeholder = { Text("Music refresh (seconds)") }
                             )
 
                             Row(
-                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -188,22 +181,19 @@ fun MessageField(
                                 }
                             }
 
-                            var demoExpanded by remember { mutableStateOf(false) }
-                            OutlinedButton(
-                                onClick = { demoExpanded = !demoExpanded },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text(if (demoExpanded) "Hide Demo" else "Show Demo") }
-
-                            if (demoExpanded) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Demo mode (no real music needed)")
-                                    Spacer(Modifier.weight(1f))
-                                    Switch(
-                                        checked = chatboxViewModel.spotifyDemoEnabled,
-                                        onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
-                                    )
-                                }
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Demo mode")
+                                Spacer(Modifier.weight(1f))
+                                Switch(
+                                    checked = chatboxViewModel.spotifyDemoEnabled,
+                                    onCheckedChange = { chatboxViewModel.setSpotifyDemoFlag(it) }
+                                )
                             }
+
+                            Text(
+                                "Status: " + if (chatboxViewModel.nowPlayingIsPlaying) "Playing" else "Paused/Stopped",
+                                style = MaterialTheme.typography.bodySmall
+                            )
 
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -234,34 +224,25 @@ fun MessageField(
                             ) {
                                 Text("Send once now (test)")
                             }
-
-                            Text(
-                                "When music is paused, the block will show “⏸ paused”.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
                         }
                     }
 
                     TabPage.Debug -> {
-                        Column(
-                            Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Debug", style = MaterialTheme.typography.titleMedium)
 
                             Text("Listener connected: ${chatboxViewModel.listenerConnected}")
+                            Text("Detected: ${chatboxViewModel.nowPlayingDetected}")
                             Text("Active package: ${chatboxViewModel.activePackage}")
-                            Text("Now Playing detected: ${chatboxViewModel.nowPlayingDetected}")
-                            Text("Is playing: ${chatboxViewModel.nowPlayingIsPlaying}")
-
                             Text("Artist: ${chatboxViewModel.lastNowPlayingArtist}")
                             Text("Title: ${chatboxViewModel.lastNowPlayingTitle}")
+                            Text("Playing: ${chatboxViewModel.nowPlayingIsPlaying}")
 
                             val lastSent = chatboxViewModel.lastSentToVrchatAtMs
                             Text("Last sent: ${if (lastSent == 0L) "never" else "$lastSent"}")
 
                             Text(
-                                "If detected=false:\n• Enable Notification Access for Chatbox\n• Restart Chatbox\n• Toggle access OFF then ON\n• Music app must show a media notification",
+                                "If Detected=false:\n• Enable Notification Access for Chatbox\n• Restart Chatbox\n• Toggle access OFF then ON\n• Music app must show a media notification",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -299,4 +280,3 @@ fun MessageField(
         }
     }
 }
-
