@@ -1,44 +1,12 @@
+// Root build.gradle (DO NOT put android { } here)
+
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // Versions are REQUIRED here, but we do NOT apply them at root
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
 }
 
-android {
-    namespace = "com.scrapw.chatbox"
-    compileSdk = 34
-
-    defaultConfig {
-        applicationId = "com.scrapw.vrca"
-        minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
-    }
-
-    buildTypes {
-        debug { }
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-    }
-
-    // Rename APK output
-    androidComponents {
-        onVariants { variant ->
-            variant.outputs.forEach { output ->
-                val name = "VRC-A-${variant.versionName}-${variant.name}.apk"
-                output.outputFileName.set(name)
-            }
-        }
-    }
-}
-
-dependencies {
-    // Keep your existing dependencies in YOUR project if you already have them.
-    // If your build breaks here, it means your project has more deps than this template.
-    // In that case: do NOT replace this file; use the Groovy version below or paste your current build file.
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
 }
