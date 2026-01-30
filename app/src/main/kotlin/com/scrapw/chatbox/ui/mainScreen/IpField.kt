@@ -1,101 +1,82 @@
 package com.scrapw.chatbox.ui.mainScreen
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
-import com.scrapw.chatbox.ui.MessengerUiState
-import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun IpField(
     chatboxViewModel: ChatboxViewModel,
-    uiState: MessengerUiState,
     modifier: Modifier = Modifier
 ) {
-    // Local text state so typing doesn't get overwritten by recompositions/flows
-    var ipText by remember(uiState.ipAddress) { mutableStateOf(uiState.ipAddress) }
+    val uiState by chatboxViewModel.messengerUiState.collectAsState()
+
+    // Local field so typing is smooth and doesn't "fight" the flow/state
+    var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
+
+    // Keep input in sync when the stored IP changes (but don’t clobber user typing)
+    LaunchedEffect(uiState.ipAddress) {
+        if (ipInput.isBlank()) ipInput = uiState.ipAddress
+    }
 
     ElevatedCard(modifier = modifier.fillMaxWidth()) {
         Column(
-            Modifier.padding(12.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("OSC Host (Quest IP)", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                IconButton(
-                    onClick = {
-                        chatboxViewModel.ipAddressLocked = !chatboxViewModel.ipAddressLocked
-                        // when unlocking, keep current uiState as base
-                        if (!chatboxViewModel.ipAddressLocked) {
-                            ipText = uiState.ipAddress
-                        }
-                    }
-                ) {
-                    Icon(
-                        if (chatboxViewModel.ipAddressLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                        contentDescription = null
-                    )
-                }
-            }
+            Text(
+                text = "OSC Host",
+                style = MaterialTheme.typography.titleMedium
+            )
 
             OutlinedTextField(
-                value = ipText,
-                onValueChange = {
-                    // if locked, don't allow edits
-                    if (!chatboxViewModel.ipAddressLocked) {
-                        ipText = it
-                        chatboxViewModel.onIpAddressChange(it)
-                    }
-                },
+                value = ipInput,
+                onValueChange = { ipInput = it },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !chatboxViewModel.ipAddressLocked,
                 singleLine = true,
-                label = { Text("IP Address") },
-                supportingText = { Text("Example: 192.168.0.25") }
+                label = { Text("Headset / Target IP") },
+                placeholder = { Text("Example: 192.168.1.23") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
             Row(
-                Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
-                    onClick = {
-                        val clean = ipText.trim()
-                        if (clean.isNotEmpty()) {
-                            chatboxViewModel.ipAddressApply(clean)
-                            chatboxViewModel.ipAddressLocked = true
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = !chatboxViewModel.ipAddressLocked
-                ) {
-                    Text("Apply")
-                }
+                    onClick = { chatboxViewModel.ipAddressApply(ipInput.trim()) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Apply") }
 
                 OutlinedButton(
-                    onClick = {
-                        // reset to current saved/state IP
-                        ipText = uiState.ipAddress
-                        chatboxViewModel.onIpAddressChange("")
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = !chatboxViewModel.ipAddressLocked
-                ) {
-                    Text("Reset")
-                }
+                    onClick = { ipInput = uiState.ipAddress },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Reset") }
             }
+
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Current target: ${uiState.ipAddress}",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.width(1.dp))
         }
     }
 }
