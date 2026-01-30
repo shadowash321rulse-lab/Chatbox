@@ -30,12 +30,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // ✅ New entry point (no ChatboxApp anymore)
-                    ChatboxScreen()
+                    ChatboxApp()
                 }
             }
-
-            // keep overlay daemon
             OverlayDaemon(this)
         }
     }
