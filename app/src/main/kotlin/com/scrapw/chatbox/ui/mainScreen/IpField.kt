@@ -16,8 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.scrapw.chatbox.ui.ChatboxViewModel
 
@@ -28,7 +26,7 @@ fun IpField(
 ) {
     val uiState by chatboxViewModel.messengerUiState.collectAsState()
 
-    // local buffer so typing doesn't "fight" StateFlow updates
+    // Local buffer so typing doesn't fight StateFlow updates
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
 
     LaunchedEffect(uiState.ipAddress) {
@@ -51,8 +49,8 @@ fun IpField(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("Headset / Target IP") },
-                placeholder = { Text("Example: 192.168.1.23") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                placeholder = { Text("Example: 192.168.1.23") }
+                // NOTE: no KeyboardOptions here to avoid build issues
             )
 
             Row(
