@@ -1,6 +1,5 @@
 package com.scrapw.chatbox
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -33,7 +32,7 @@ private enum class AppPage(val title: String) {
     Cycle("Cycle"),
     NowPlaying("Now Playing"),
     Debug("Debug"),
-    Settings("Info")
+    Settings("Settings")
 }
 
 private enum class InfoTab(val title: String) {
@@ -66,7 +65,10 @@ fun ChatboxScreen(
             )
         },
         bottomBar = {
-            SlimBottomBar(current = page, onSelect = { page = it })
+            SlimBottomBar(
+                current = page,
+                onSelect = { page = it }
+            )
         }
     ) { padding ->
         Box(
@@ -79,7 +81,7 @@ fun ChatboxScreen(
                 AppPage.Cycle -> CyclePage(chatboxViewModel)
                 AppPage.NowPlaying -> NowPlayingPage(chatboxViewModel)
                 AppPage.Debug -> DebugPage(chatboxViewModel)
-                AppPage.Settings -> InfoPage()
+                AppPage.Settings -> SettingsPage()
             }
         }
     }
@@ -102,7 +104,7 @@ private fun SlimBottomBar(
             BottomTab(AppPage.Cycle, current, Icons.Filled.Sync, onSelect)
             BottomTab(AppPage.NowPlaying, current, Icons.Filled.MusicNote, onSelect)
             BottomTab(AppPage.Debug, current, Icons.Filled.BugReport, onSelect)
-            BottomTab(AppPage.Settings, current, Icons.Filled.Info, onSelect)
+            BottomTab(AppPage.Settings, current, Icons.Filled.Settings, onSelect)
         }
     }
 }
@@ -169,63 +171,9 @@ private fun SectionCard(
 }
 
 @Composable
-private fun ExpandableHeader(
-    title: String,
-    subtitle: String?,
-    expanded: Boolean,
-    onToggle: () -> Unit
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onToggle() }
-            .padding(vertical = 2.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Text(if (expanded) "Hide" else "Show", style = MaterialTheme.typography.labelMedium)
-        }
-        if (!subtitle.isNullOrBlank()) {
-            Spacer(Modifier.height(2.dp))
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun PresetRow(
-    label: String,
-    preview: String,
-    onLoad: () -> Unit,
-    onSave: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-            OutlinedButton(
-                onClick = onLoad,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("Load") }
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = onSave,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) { Text("Save") }
-        }
-
-        if (preview.isBlank()) {
-            Text("Empty", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            Text(preview, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
 
-    // local input so typing doesn't fight flow
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
     LaunchedEffect(uiState.ipAddress) {
         if (ipInput.isBlank()) ipInput = uiState.ipAddress
@@ -263,7 +211,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Manual Send",
-            subtitle = "One-off message (doesn’t affect Cycle / Now Playing / AFK)."
+            subtitle = "One-off message (doesn’t affect Cycle/Now Playing/AFK)."
         ) {
             OutlinedTextField(
                 value = vm.messageText.value,
@@ -272,10 +220,51 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 minLines = 2,
                 label = { Text("Message") }
             )
+            Button(onClick = { vm.sendMessage() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Send")
+            }
+        }
+    }
+}
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { vm.sendMessage() }, modifier = Modifier.weight(1f)) { Text("Send") }
-                OutlinedButton(onClick = { vm.stashMessage() }, modifier = Modifier.weight(1f)) { Text("Stash") }
+@Composable
+private fun PresetRow(
+    title: String,
+    slotCount: Int,
+    preview: (Int) -> String,
+    onLoad: (Int) -> Unit,
+    onSave: (Int) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            for (slot in 1..slotCount) {
+                ElevatedCard(
+                    modifier = Modifier.widthIn(min = 220.dp)
+                ) {
+                    Column(
+                        Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Slot $slot", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            preview(slot),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onLoad(slot) }) { Text("Load") }
+                            Button(onClick = { onSave(slot) }) { Text("Save") }
+                        }
+                    }
+                }
             }
         }
     }
@@ -283,149 +272,97 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
-    var afkExpanded by rememberSaveable { mutableStateOf(true) }
-    var cycleExpanded by rememberSaveable { mutableStateOf(true) }
-
     PageContainer {
-
-        ElevatedCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-                ExpandableHeader(
-                    title = "AFK (top line)",
-                    subtitle = "AFK stays above Cycle + Now Playing. Interval is forced.",
-                    expanded = afkExpanded,
-                    onToggle = { afkExpanded = !afkExpanded }
+        SectionCard(
+            title = "AFK (top line)",
+            subtitle = "AFK sits above Cycle + Now Playing. Interval is forced. Use presets to save text."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("AFK enabled")
+                Switch(
+                    checked = vm.afkEnabled,
+                    onCheckedChange = { vm.afkEnabled = it }
                 )
-
-                AnimatedVisibility(afkExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("AFK enabled")
-                            Switch(
-                                checked = vm.afkEnabled,
-                                onCheckedChange = { vm.afkEnabled = it }
-                            )
-                        }
-
-                        OutlinedTextField(
-                            value = vm.afkMessage,
-                            onValueChange = { vm.updateAfkMessage(it) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            label = { Text("AFK text") }
-                        )
-
-                        Text("Presets (AFK)", style = MaterialTheme.typography.labelLarge)
-                        PresetRow(
-                            label = "Slot 1",
-                            preview = vm.getAfkPresetPreview(1),
-                            onLoad = { vm.loadAfkPreset(1) },
-                            onSave = { vm.saveAfkPreset(1, vm.afkMessage) }
-                        )
-                        Divider()
-                        PresetRow(
-                            label = "Slot 2",
-                            preview = vm.getAfkPresetPreview(2),
-                            onLoad = { vm.loadAfkPreset(2) },
-                            onSave = { vm.saveAfkPreset(2, vm.afkMessage) }
-                        )
-                        Divider()
-                        PresetRow(
-                            label = "Slot 3",
-                            preview = vm.getAfkPresetPreview(3),
-                            onLoad = { vm.loadAfkPreset(3) },
-                            onSave = { vm.saveAfkPreset(3, vm.afkMessage) }
-                        )
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { vm.startAfkSender() },
-                                modifier = Modifier.weight(1f),
-                                enabled = vm.afkEnabled
-                            ) { Text("Start") }
-
-                            OutlinedButton(
-                                onClick = { vm.stopAfkSender() },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Stop") }
-                        }
-
-                        OutlinedButton(
-                            onClick = { vm.sendAfkNow() },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = vm.afkEnabled
-                        ) { Text("Send once") }
-                    }
-                }
             }
+
+            OutlinedTextField(
+                value = vm.afkMessage,
+                onValueChange = { vm.updateAfkMessage(it) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("AFK text") }
+            )
+
+            PresetRow(
+                title = "AFK presets",
+                slotCount = 3,
+                preview = { slot -> vm.getAfkPresetPreview(slot) },
+                onLoad = { slot -> vm.loadAfkPreset(slot) },
+                onSave = { slot -> vm.saveAfkPreset(slot, vm.afkMessage) }
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.startAfkSender() },
+                    modifier = Modifier.weight(1f),
+                    enabled = vm.afkEnabled
+                ) { Text("Start AFK") }
+
+                OutlinedButton(
+                    onClick = { vm.stopAfkSender() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Stop AFK") }
+            }
+
+            OutlinedButton(
+                onClick = { vm.sendAfkNow() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = vm.afkEnabled
+            ) { Text("Send AFK once") }
         }
 
-        ElevatedCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-                ExpandableHeader(
-                    title = "Cycle Messages",
-                    subtitle = "Rotates lines. Minimum interval is 2 seconds.",
-                    expanded = cycleExpanded,
-                    onToggle = { cycleExpanded = !cycleExpanded }
+        SectionCard(
+            title = "Cycle Messages",
+            subtitle = "Cycle is the middle line. Now Playing stays underneath automatically."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Cycle enabled")
+                Switch(
+                    checked = vm.cycleEnabled,
+                    onCheckedChange = { vm.setCycleEnabledFlag(it) }
                 )
+            }
 
-                AnimatedVisibility(cycleExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = vm.cycleMessages,
+                onValueChange = { vm.updateCycleMessages(it) },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 4,
+                label = { Text("Lines (one per line)") }
+            )
 
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Cycle enabled")
-                            Switch(
-                                checked = vm.cycleEnabled,
-                                onCheckedChange = { vm.setCycleEnabledFlag(it) }
-                            )
-                        }
+            PresetRow(
+                title = "Cycle presets",
+                slotCount = 5,
+                preview = { slot -> vm.getCyclePresetPreview(slot) },
+                onLoad = { slot -> vm.loadCyclePreset(slot) },
+                onSave = { slot -> vm.saveCyclePreset(slot, vm.cycleMessages) }
+            )
 
-                        OutlinedTextField(
-                            value = vm.cycleMessages,
-                            onValueChange = { vm.updateCycleMessages(it) },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 4,
-                            label = { Text("Lines (one per line)") }
-                        )
+            OutlinedTextField(
+                value = vm.cycleIntervalSeconds.toString(),
+                onValueChange = { raw ->
+                    raw.toIntOrNull()?.let { vm.setCycleIntervalSecondsFlag(it.coerceAtLeast(2)) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Cycle speed (seconds) (min 2)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
 
-                        OutlinedTextField(
-                            value = vm.cycleIntervalSeconds.toString(),
-                            onValueChange = { raw ->
-                                raw.toIntOrNull()?.let { vm.setCycleIntervalSecondsFlag(it) }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            label = { Text("Cycle speed (seconds) (min 2)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-
-                        Text("Presets (Cycle)", style = MaterialTheme.typography.labelLarge)
-                        (1..5).forEach { slot ->
-                            PresetRow(
-                                label = "Slot $slot",
-                                preview = vm.getCyclePresetPreview(slot),
-                                onLoad = { vm.loadCyclePreset(slot) },
-                                onSave = { vm.saveCyclePreset(slot, vm.cycleMessages) }
-                            )
-                            if (slot != 5) Divider()
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { vm.startCycle() },
-                                modifier = Modifier.weight(1f),
-                                enabled = vm.cycleEnabled
-                            ) { Text("Start") }
-
-                            OutlinedButton(
-                                onClick = { vm.stopCycle() },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Stop") }
-                        }
-                    }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) { Text("Start") }
+                OutlinedButton(onClick = { vm.stopCycle() }, modifier = Modifier.weight(1f)) { Text("Stop") }
             }
         }
     }
@@ -434,116 +371,80 @@ private fun CyclePage(vm: ChatboxViewModel) {
 @Composable
 private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
-    var musicExpanded by rememberSaveable { mutableStateOf(true) }
-    var previewExpanded by rememberSaveable { mutableStateOf(true) }
 
     PageContainer {
-
-        ElevatedCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                ExpandableHeader(
-                    title = "Now Playing (phone music)",
-                    subtitle = "Uses Notification Access. Min refresh is 2 seconds.",
-                    expanded = musicExpanded,
-                    onToggle = { musicExpanded = !musicExpanded }
+        SectionCard(
+            title = "Now Playing (phone music)",
+            subtitle = "Uses Notification Access. Works with Spotify/YouTube Music/etc."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Enable Now Playing block")
+                Switch(
+                    checked = vm.spotifyEnabled,
+                    onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
                 )
+            }
 
-                AnimatedVisibility(musicExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Enable Now Playing block")
-                            Switch(
-                                checked = vm.spotifyEnabled,
-                                onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
-                            )
-                        }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Demo mode (testing)")
+                Switch(
+                    checked = vm.spotifyDemoEnabled,
+                    onCheckedChange = { vm.setSpotifyDemoFlag(it) }
+                )
+            }
 
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Demo mode (testing)")
-                            Switch(
-                                checked = vm.spotifyDemoEnabled,
-                                onCheckedChange = { vm.setSpotifyDemoFlag(it) }
-                            )
-                        }
+            OutlinedButton(
+                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Notification Access settings") }
 
-                        OutlinedButton(
-                            onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Open Notification Access settings") }
+            OutlinedTextField(
+                value = vm.musicRefreshSeconds.toString(),
+                onValueChange = { raw ->
+                    raw.toIntOrNull()?.let { vm.updateMusicRefreshSeconds(it.coerceAtLeast(2)) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Music refresh speed (seconds) (min 2)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
 
-                        OutlinedTextField(
-                            value = vm.musicRefreshSeconds.toString(),
-                            onValueChange = { raw ->
-                                raw.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            label = { Text("Music refresh speed (seconds) (min 2)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
+            Text("Progress bar presets:", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..5).forEach { p ->
+                    val selected = vm.spotifyPreset == p
+                    val colors =
+                        if (selected) ButtonDefaults.buttonColors()
+                        else ButtonDefaults.outlinedButtonColors()
 
-                        Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            (1..5).forEach { p ->
-                                val selected = vm.spotifyPreset == p
-                                val colors =
-                                    if (selected) ButtonDefaults.buttonColors()
-                                    else ButtonDefaults.outlinedButtonColors()
-
-                                Button(
-                                    onClick = { vm.updateSpotifyPreset(p) },
-                                    colors = colors,
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) { Text("Preset $p") }
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { vm.startNowPlayingSender() },
-                                modifier = Modifier.weight(1f),
-                                enabled = vm.spotifyEnabled
-                            ) { Text("Start") }
-
-                            OutlinedButton(
-                                onClick = { vm.stopNowPlayingSender() },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Stop") }
-                        }
-
-                        OutlinedButton(
-                            onClick = { vm.sendNowPlayingOnce() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Send once (test)") }
-                    }
+                    Button(
+                        onClick = { vm.updateSpotifyPreset(p) },
+                        colors = colors,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) { Text("$p") }
                 }
             }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { vm.startNowPlayingSender() }, modifier = Modifier.weight(1f)) { Text("Start") }
+                OutlinedButton(onClick = { vm.stopNowPlayingSender() }, modifier = Modifier.weight(1f)) { Text("Stop") }
+            }
+
+            OutlinedButton(
+                onClick = { vm.sendNowPlayingOnce() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Send once now (test)") }
         }
 
-        ElevatedCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                ExpandableHeader(
-                    title = "Detected / Preview",
-                    subtitle = "If blank: enable access, restart app, then play music.",
-                    expanded = previewExpanded,
-                    onToggle = { previewExpanded = !previewExpanded }
-                )
-
-                AnimatedVisibility(previewExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Detected: ${vm.nowPlayingDetected}")
-                        Text("Artist: ${vm.lastNowPlayingArtist}")
-                        Text("Title: ${vm.lastNowPlayingTitle}")
-                        Text("App: ${vm.activePackage}")
-                        Text("Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
-                    }
-                }
-            }
+        SectionCard(
+            title = "Detected / Preview",
+            subtitle = "If blank: enable access, restart app, then play music."
+        ) {
+            Text("Detected: ${vm.nowPlayingDetected}")
+            Text("Artist: ${vm.lastNowPlayingArtist}")
+            Text("Title: ${vm.lastNowPlayingTitle}")
+            Text("App: ${vm.activePackage}")
+            Text("Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
         }
     }
 }
@@ -566,40 +467,30 @@ private fun DebugPage(vm: ChatboxViewModel) {
             subtitle = "Shows what each module is generating, plus the combined message."
         ) {
             SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DebugBlock("AFK", vm.debugLastAfkOsc)
-                    DebugBlock("Cycle", vm.debugLastCycleOsc)
-                    DebugBlock("Music", vm.debugLastMusicOsc)
-                    DebugBlock("Combined", vm.debugLastCombinedOsc)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("AFK:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
+
+                    Text("Cycle:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
+
+                    Text("Music:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
+
+                    Text("Combined:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
                 }
             }
         }
 
         SectionCard(title = "VRChat send status") {
             Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
-            Text(
-                "Tip: Stop buttons send a blank message to clear the Chatbox immediately.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
     }
 }
 
 @Composable
-private fun DebugBlock(title: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = MaterialTheme.typography.labelLarge)
-        Text(
-            if (value.isBlank()) "(empty)" else value,
-            fontFamily = FontFamily.Monospace,
-            style = MaterialTheme.typography.bodySmall
-        )
-        Divider()
-    }
-}
-
-@Composable
-private fun InfoPage() {
+private fun SettingsPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     val overview = remember {
@@ -609,7 +500,7 @@ Made by: Ashoska Mitsu Sisko
 Base: ScrapW’s Chatbox base (heavily revamped)
 
 VRC-A sends text to VRChat’s Chatbox using OSC over your Wi-Fi network.
-It is designed for standalone/mobile-friendly setups and includes debug tools
+It’s designed for standalone / mobile-friendly setups, with debug indicators
 so you can quickly tell what’s failing (connection, permissions, detection).
         """.trimIndent()
     }
@@ -617,118 +508,57 @@ so you can quickly tell what’s failing (connection, permissions, detection).
     val features = remember {
         """
 FEATURES
-A) Connection / Sending
-- Set target headset/device IP and send one-off messages.
-
-B) Cycle (Rotating Messages)
-- Toggle Cycle on/off
-- Multi-line rotation (one line per row)
-- Adjustable interval (minimum 2 seconds)
-- Presets: 5 slots (messages + interval saved)
-
-C) Now Playing (Phone Music)
-- Reads phone media via Notification Access / MediaSession
-- Demo mode for testing
-- Refresh interval minimum 2 seconds
+- Manual sending
+- Cycle messages (5 presets)
+- Now Playing block (phone notifications)
 - 5 progress bar presets
-- Shows “Paused” when playback is paused (when player reports it)
-
-D) AFK (Top Line)
-- AFK displays above Cycle + Now Playing
-- Forced interval (no chooser)
-- Presets: 3 slots (text saved)
-
-E) Debug
-- Shows listener connection + active package + detected state
-- Shows OSC output preview for: AFK / Cycle / Music / Combined
-
-QoL changes
-- Stop buttons send a blank message to clear VRChat chatbox immediately.
-- Minimum send intervals help reduce VRChat “random cut-out” from sending too fast.
+- AFK tag at top (3 presets)
+- Debug indicators (including OSC preview)
+- Send coordinator (prevents modules cancelling each other)
+- Min 2s cooldown (helps avoid VRChat chatbox cutouts)
+- Stop clears lines immediately (sends blank space)
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-TUTORIAL (DUMBED DOWN)
-1) Same Wi-Fi
-- Your phone and headset must be on the same network.
-
-2) Find headset IP
-Quest:
-Settings → Wi-Fi → tap network → look for “IP address”
-Example: 192.168.1.23
-
-3) Put IP into VRC-A
-Dashboard → Headset IP address → Apply
-
-4) Test sending
-Manual Send → type hello → Send
-If it shows in VRChat, connection is good.
-
-5) Enable Now Playing
-Now Playing page → Open Notification Access settings
-Enable VRC-A
-Restart VRC-A
-Play music (Spotify / YouTube Music / etc)
-
-6) Start modules
-Cycle page → enable Cycle → Start
-Now Playing page → enable Now Playing → Start
-AFK page → enable AFK → Start
+TUTORIAL (simple)
+1) Put phone + headset on same Wi-Fi
+2) Find headset IP (Wi-Fi details)
+3) Dashboard -> enter IP -> Apply
+4) Manual Send test ("hello")
+5) Now Playing -> enable Notification Access
+6) Start Now Playing
+7) Cycle -> Start
+8) AFK -> Start
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-FIXED / IMPROVED
-- Build/plugin issues fixed (Gradle / missing plugins)
-- Redeclaration conflicts removed (duplicate composables/enums)
-- Now Playing stuck on blank fixed via NowPlayingState → ViewModel fields
-- Progress time live-updating restored using elapsedRealtime position tracking
-- Module stop clears chatbox via blank-send (no “stuck message” waiting)
-
-KNOWN / POSSIBLE ISSUES
-- Some music apps only update position on interaction (pause/seek/skip).
-  Live progress depends on the player reporting PlaybackState properly.
-- If a non-media notification slips through, stricter filtering may still be needed
-  in the NotificationListener to ignore irrelevant notifications.
-- Routers with “client isolation” can block phone→headset traffic.
+KNOWN BUGS / NOTES
+- Some music players update progress only when you interact (pause/seek/skip).
+  VRC-A tries to estimate progress while playing using elapsed time.
+- Wrong IP / different Wi-Fi = nothing sends.
+- Some routers block device-to-device traffic (client isolation).
         """.trimIndent()
     }
 
     val help = remember {
         """
-HELP / TROUBLESHOOTING
-Nothing appears in VRChat:
-- Re-check IP
-- Make sure OSC is enabled in VRChat
-- Same Wi-Fi
-- Try Manual Send first
-
-Now Playing blank:
-- Enable Notification Access for VRC-A
-- Restart app (and sometimes phone)
-- Make sure music app shows a media notification
-
-Progress dot not moving:
-- Depends on music player updates
-- Try a different music app to compare
+HELP
+- Nothing in VRChat: check IP + OSC enabled + same Wi-Fi
+- Now Playing blank: enable Notification Access + restart app
+- Progress not moving: depends on music player
         """.trimIndent()
     }
 
-    // If you want the full mega-document embedded later, paste it into this string.
-    val fullDoc = remember {
-        """
-Full document can be pasted here when you want the entire “manual” stored inside the app.
-(Currently the Info tabs cover the important parts in a cleaner layout.)
-        """.trimIndent()
-    }
+    val fullDoc = remember { "Full document can be pasted here later if you want it embedded." }
 
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "Overview, features, tutorial, bugs, and help."
+            subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
         ) {
             Row(
                 modifier = Modifier
@@ -768,7 +598,7 @@ Full document can be pasted here when you want the entire “manual” stored in
             }
         }
 
-        SectionCard(title = "About") {
+        SectionCard(title = "About (short)") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
