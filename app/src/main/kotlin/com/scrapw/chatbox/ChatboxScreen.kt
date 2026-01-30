@@ -230,9 +230,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
     PageContainer {
+        // =========================
+        // AFK section + presets
+        // =========================
         SectionCard(
             title = "AFK (top line)",
-            subtitle = "AFK shows above Cycle + Now Playing. You can run AFK by itself."
+            subtitle = "AFK shows above Cycle + Now Playing. AFK has its own timer."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("AFK enabled")
@@ -249,6 +252,18 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 singleLine = true,
                 label = { Text("AFK text") }
             )
+
+            Text("AFK presets (saved):", style = MaterialTheme.typography.labelLarge)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AfkPresetButtons(slot = 1, vm = vm)
+                AfkPresetButtons(slot = 2, vm = vm)
+                AfkPresetButtons(slot = 3, vm = vm)
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -270,6 +285,9 @@ private fun CyclePage(vm: ChatboxViewModel) {
             ) { Text("Send AFK once") }
         }
 
+        // =========================
+        // Cycle section + presets
+        // =========================
         SectionCard(
             title = "Cycle Messages",
             subtitle = "Rotates your lines. Now Playing stays underneath automatically."
@@ -293,14 +311,28 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("Lines (one per line)") }
             )
 
+            Text("Cycle presets (saved):", style = MaterialTheme.typography.labelLarge)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CyclePresetButtons(slot = 1, vm = vm)
+                CyclePresetButtons(slot = 2, vm = vm)
+                CyclePresetButtons(slot = 3, vm = vm)
+                CyclePresetButtons(slot = 4, vm = vm)
+                CyclePresetButtons(slot = 5, vm = vm)
+            }
+
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(1) }
+                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it } // VM enforces min=2
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Cycle speed (seconds)") },
+                label = { Text("Cycle speed (seconds, min 2)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
@@ -308,6 +340,28 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) { Text("Start") }
                 OutlinedButton(onClick = { vm.stopCycle() }, modifier = Modifier.weight(1f)) { Text("Stop") }
             }
+        }
+    }
+}
+
+@Composable
+private fun AfkPresetButtons(slot: Int, vm: ChatboxViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("AFK $slot", style = MaterialTheme.typography.labelSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { vm.loadAfkPreset(slot) }) { Text("Load") }
+            Button(onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }) { Text("Save") }
+        }
+    }
+}
+
+@Composable
+private fun CyclePresetButtons(slot: Int, vm: ChatboxViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Cycle $slot", style = MaterialTheme.typography.labelSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { vm.loadCyclePreset(slot) }) { Text("Load") }
+            Button(onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }) { Text("Save") }
         }
     }
 }
@@ -345,16 +399,21 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             OutlinedTextField(
                 value = vm.musicRefreshSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(1) }
+                    raw.toIntOrNull()?.let { vm.musicRefreshSeconds = it } // VM enforces min=2
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Music refresh speed (seconds)") },
+                label = { Text("Music refresh speed (seconds, min 2)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
             Text("Progress bar presets:", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 (1..5).forEach { p ->
                     val selected = vm.spotifyPreset == p
                     val colors =
@@ -412,6 +471,23 @@ private fun DebugPage(vm: ChatboxViewModel) {
         ) {
             Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
+
+        SectionCard(
+            title = "OSC Preview (what VRC-A is generating)",
+            subtitle = "This shows each component AND the final combined output."
+        ) {
+            SelectionContainer {
+                Text(
+                    text =
+                        "AFK:\n${vm.debugLastAfkOsc}\n\n" +
+                            "Cycle:\n${vm.debugLastCycleOsc}\n\n" +
+                            "Music:\n${vm.debugLastMusicOsc}\n\n" +
+                            "Combined:\n${vm.debugLastCombinedOsc}",
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
     }
 }
 
@@ -420,7 +496,6 @@ private fun SettingsPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     val fullDoc = remember {
-        // Your full doc text (unchanged), stored in-app.
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
@@ -453,7 +528,181 @@ It works by sending OSC messages over your local Wi-Fi network to your headset
 ============================================================
 FEATURES (EVERYTHING THE APP CAN DO)
 ============================================================
-(…same as your document…)
+
+A) Connection / Sending
+- Send a manual message instantly to VRChat chatbox.
+- Set the OSC target IP address (your headset/device IP).
+- Uses your saved message options (send immediately, typing indicator, etc) if enabled in the app.
+
+B) Cycle (Rotating Messages)
+- Toggle Cycle on/off.
+- Type multiple lines (one per line).
+- Set Cycle speed (seconds between switching lines).
+- Start/Stop Cycle sending.
+- When enabled, Cycle text appears above Now Playing automatically.
+
+C) Now Playing (Phone Music)
+- Pulls “Now Playing” from your phone using Notification Access / MediaSession.
+- Works with apps that show a media notification (Spotify, YouTube Music, etc).
+- Has a Demo mode for testing without real music.
+- Uses its OWN refresh speed (seconds between progress updates).
+- Start/Stop Now Playing sending.
+- “Send once” test button.
+
+D) Progress Bar Presets (5)
+Each preset has a moving dot that updates with the song progress:
+1) Love preset:     ♡━━━◉━━━━♡
+2) Minimal preset:  ━━◉──────────
+3) Crystal preset:  ⟡⟡⟡◉⟡⟡⟡⟡⟡
+4) Soundwave:       ▁▂▃▄▅●▅▄▃▂▁
+5) Geometry:        ▣▣▣◉▢▢▢▢▢▢▢
+
+(Exact visuals may vary slightly depending on how the app trims to VRChat’s char limit.)
+
+E) AFK (Top Line)
+- Toggle AFK on/off.
+- Choose AFK text (example: “AFK”, “AFK - grabbing water”, etc).
+- AFK is intended to be the very top line above Cycle + Now Playing.
+- AFK has its own sending system (not tied to Cycle or Now Playing).
+- AFK presets: 3 slots (saved even if app closes).
+
+F) Debug / Status
+- Shows whether Notification Listener is connected.
+- Shows whether Now Playing is detected.
+- Shows last detected Artist/Title.
+- Shows active package (which music app it’s seeing).
+- Shows last time it sent to VRChat.
+- Shows exactly what AFK / Cycle / Now Playing / Combined are generating.
+
+============================================================
+TUTORIAL (DUMBED DOWN STEP BY STEP)
+============================================================
+
+STEP 1: Put your headset and phone on the same Wi-Fi
+- Both devices MUST be on the same local network.
+- If you’re on different Wi-Fi, messages will not reach VRChat.
+
+STEP 2: Find your headset/device IP address
+You need the IP address of the device that VRChat is running on (your headset).
+
+Quest / Android headset (typical):
+1) Open Settings
+2) Go to Wi-Fi
+3) Tap your connected network
+4) Find “IP Address” (example: 192.168.1.23)
+
+If you can’t find it:
+- Some devices hide it under “Advanced” in the Wi-Fi network details.
+
+STEP 3: Put the IP into VRC-A
+1) Open VRC-A
+2) Go to Dashboard
+3) Type your headset IP in “Headset IP address”
+4) Tap Apply
+
+STEP 4: Test sending
+1) In “Manual Send”, type “hello”
+2) Press Send
+If VRChat chatbox shows it → your connection is working.
+
+If nothing shows:
+- Recheck the IP address
+- Make sure VRChat OSC is enabled
+- Make sure both devices are on the same Wi-Fi
+
+STEP 5: Enable Now Playing (music detection)
+Now Playing reads the phone’s media notifications.
+
+1) Go to Now Playing page
+2) Tap “Open Notification Access settings”
+3) Enable Notification Access for VRC-A (Chatbox)
+4) Close settings
+5) Restart VRC-A (recommended after enabling)
+6) Play music in Spotify / YouTube Music / etc
+7) Go back to Now Playing page and check Detected / Artist / Title
+
+If it still shows blank:
+- Toggle Notification Access OFF then ON again
+- Restart the phone (sometimes fixes listener permissions)
+- Make sure your music app actually shows a media notification
+- Try another music app to confirm it’s not the player
+
+STEP 6: Start Now Playing sending
+1) Toggle “Enable Now Playing block”
+2) Press Start
+3) Your Now Playing block should begin sending to VRChat
+4) If you need to test quickly, use “Send once now (test)”
+
+STEP 7: Set your progress bar preset
+1) On Now Playing page, pick preset 1–5
+2) The dot should move as the song progresses
+
+STEP 8: Use Cycle messages
+1) Go to Cycle page
+2) Enable Cycle
+3) Put one message per line
+4) Set the speed (seconds)
+5) Press Start
+
+STEP 9: Use AFK
+1) Go to Cycle page
+2) Enable AFK
+3) Type AFK text
+4) Press “Start AFK” (or “Send AFK once” for quick test)
+
+============================================================
+BUGS THAT WERE FIXED DURING DEVELOPMENT (HISTORY)
+============================================================
+- Build system plugin issues (Gradle plugin/version setup errors).
+- Spotify developer/API auth approach removed/replaced (Spotify apps not available → switched to phone Now Playing detection).
+- Duplicate composables / duplicate enums caused compile conflicts (redeclaration errors).
+- Now Playing state stuck on false/blank/blank (fixed by collecting NowPlayingState into ViewModel fields).
+- Now Playing service setup in manifest for Notification Listener.
+- Preset progress bars overflowing the chatbox (shortened bars to match the smaller preset size).
+- UI layout problems (buttons missing, Spotify block placement issues) replaced with a more organised layout.
+
+============================================================
+CURRENT / KNOWN BUGS (THINGS THAT MAY STILL HAPPEN)
+============================================================
+Now Playing detection:
+- Some phones/music apps do not update progress constantly.
+  If the player only updates on interaction (pause/seek/next), the app may not get continuous position updates.
+  (This depends on how the music app reports PlaybackState.)
+
+Other notifications being detected:
+- If Notification Access isn’t filtered strictly to media sessions, the listener may catch unrelated notifications.
+  If that happens, the app needs stricter filtering (media-style + active MediaSession only).
+
+Sync / delays:
+- If Cycle + Now Playing + AFK send too fast or collide, VRChat can drop updates.
+  VRC-A enforces safe minimums and sends messages one-at-a-time.
+
+Paused status display:
+- “Paused” should show when your music is paused, but some players report states inconsistently.
+
+General networking:
+- Wrong IP / different Wi-Fi = nothing sends.
+- Some routers isolate wireless clients (client isolation) which blocks device-to-device traffic.
+
+============================================================
+HELP / QUICK TROUBLESHOOTING
+============================================================
+Nothing appears in VRChat:
+- Check IP address
+- Confirm VRChat OSC enabled
+- Same Wi-Fi on both devices
+- Try “Manual Send” first
+
+Now Playing stays blank:
+- Enable Notification Access
+- Restart app
+- Toggle access off/on
+- Play music with a visible media notification
+
+Progress dot not moving:
+- Some players do not provide continuous updates
+- Try a different music app to compare
+
 ============================================================
 END
 ============================================================
@@ -475,49 +724,48 @@ so you can quickly tell what’s failing (connection, permissions, detection).
     val features = remember {
         """
 FEATURES
-- Manual sending
-- Cycle messages
-- Now Playing block (phone notifications)
-- 5 progress presets
-- AFK tag at top
-- Debug indicators
+- Manual sending (Dashboard)
+- Cycle messages (with 5 saveable presets)
+- Now Playing block (phone notifications + 5 progress presets)
+- AFK tag at top (with 3 saveable presets)
+- Debug indicators + OSC preview
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-TUTORIAL
-1) Same Wi-Fi
-2) Find headset IP
-3) Put IP into Dashboard and Apply
+TUTORIAL (Quick)
+1) Same Wi-Fi on phone + headset
+2) Find headset IP in Wi-Fi details
+3) Dashboard -> enter IP -> Apply
 4) Manual Send test
-5) Enable Notification Access for Now Playing
-6) Start Now Playing sender
-7) Start Cycle
-8) Start AFK
+5) Now Playing -> enable Notification Access
+6) Now Playing -> Start
+7) Cycle -> Start
+8) AFK -> Start
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-BUGS (History + Current)
-See Full Doc tab for the full list.
+BUGS
+- See “Full Doc” for the complete fixed-bugs list and known current issues.
         """.trimIndent()
     }
 
     val help = remember {
         """
 HELP
-- Nothing in VRChat: check IP + OSC + same Wi-Fi
+- Nothing in VRChat: check IP + OSC enabled + same Wi-Fi
 - Now Playing blank: enable Notification Access + restart app
-- Progress not moving: depends on music player
+- Progress not moving: depends on music player, try another music app
         """.trimIndent()
     }
 
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
+            subtitle = "What it is, what it does, tutorial, features, and bugs."
         ) {
             Row(
                 modifier = Modifier
@@ -541,16 +789,16 @@ HELP
                 }
             }
 
-            SelectionContainer {
-                val text = when (tab) {
-                    InfoTab.Overview -> overview
-                    InfoTab.Features -> features
-                    InfoTab.Tutorial -> tutorial
-                    InfoTab.Bugs -> bugs
-                    InfoTab.Troubleshoot -> help
-                    InfoTab.FullDoc -> fullDoc
-                }
+            val text = when (tab) {
+                InfoTab.Overview -> overview
+                InfoTab.Features -> features
+                InfoTab.Tutorial -> tutorial
+                InfoTab.Bugs -> bugs
+                InfoTab.Troubleshoot -> help
+                InfoTab.FullDoc -> fullDoc
+            }
 
+            SelectionContainer {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyMedium,
