@@ -15,8 +15,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.scrapw.chatbox.ChatboxApplication
-import com.scrapw.chatbox.NowPlayingState
 import com.scrapw.chatbox.NowPlayingSnapshot
+import com.scrapw.chatbox.NowPlayingState
 import com.scrapw.chatbox.UpdateInfo
 import com.scrapw.chatbox.UpdateStatus
 import com.scrapw.chatbox.checkUpdate
@@ -197,6 +197,11 @@ class ChatboxViewModel(
     }
 
     // =========================
+    // AFK toggle (UI expects this)
+    // =========================
+    var afkEnabled by mutableStateOf(false)
+
+    // =========================
     // Cycle (independent timer)
     // =========================
     var cycleEnabled by mutableStateOf(false)
@@ -243,6 +248,9 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
+    // UI expects this field name:
+    var nowPlayingIsPlaying by mutableStateOf(false)
+
     // last snapshot (for pause freeze + progress)
     private var lastSnapshot: NowPlayingSnapshot = NowPlayingSnapshot()
 
@@ -251,7 +259,7 @@ class ChatboxViewModel(
     private var nowPlayingJob: Job? = null
 
     init {
-        // This is the “collect into fields” part you asked for (clean + direct)
+        // Collect NowPlayingState into fields (the exact “init collect” you asked for)
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 lastSnapshot = s
@@ -263,12 +271,14 @@ class ChatboxViewModel(
                 lastNowPlayingTitle = if (s.title.isBlank()) "(blank)" else s.title
                 lastNowPlayingArtist = if (s.artist.isBlank()) "(blank)" else s.artist
 
-                // If play/pause changes, force one render immediately
+                nowPlayingIsPlaying = s.isPlaying
+
+                // force renderer refresh on state change
                 musicTickFlow.value = musicTickFlow.value + 1L
             }
         }
 
-        // Renderer: combines cycle line + now playing + tick, and only sends when output changes.
+        // Renderer: merges Cycle + Now Playing, sends only when content changes
         startRenderer()
     }
 
@@ -277,7 +287,6 @@ class ChatboxViewModel(
 
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
-        // force a re-render
         musicTickFlow.value = musicTickFlow.value + 1L
     }
 
@@ -297,7 +306,7 @@ class ChatboxViewModel(
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
-                // Only tick while playing (FREEZE when paused)
+                // tick ONLY while playing → freeze when paused
                 if (lastSnapshot.isPlaying) {
                     musicTickFlow.value = musicTickFlow.value + 1L
                 }
@@ -312,14 +321,12 @@ class ChatboxViewModel(
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
-        // force a render+send right now
         musicTickFlow.value = musicTickFlow.value + 1L
     }
 
     fun stopAll() {
         stopCycle()
         stopNowPlayingSender()
-        // renderer stays running; it just won’t send if nothing enabled
     }
 
     // =========================
@@ -341,10 +348,7 @@ class ChatboxViewModel(
                 .map { it.trimEnd() }
                 .distinctUntilChanged()
                 .collect { outgoing ->
-                    // Don’t spam empty
                     if (outgoing.isBlank()) return@collect
-
-                    // Send only if changed
                     if (outgoing != lastSentText) {
                         sendToVrchatRaw(outgoing, local = false, addToConversation = false)
                         lastSentText = outgoing
@@ -354,13 +358,16 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Compose outgoing text (Cycle on top, NowPlaying always under)
+    // Compose outgoing text (Cycle on top, NowPlaying under)
     // =========================
     private fun buildOutgoingText(cycleLine: String?, snap: NowPlayingSnapshot): String {
         val lines = mutableListOf<String>()
 
         val cycle = cycleLine?.trim().orEmpty()
         if (cycle.isNotEmpty()) lines += cycle
+
+        // Optional AFK label line (toggle only)
+        if (afkEnabled) lines += "AFK"
 
         lines.addAll(buildNowPlayingLines(snap))
 
@@ -370,8 +377,8 @@ class ChatboxViewModel(
     private fun buildNowPlayingLines(s: NowPlayingSnapshot): List<String> {
         if (!spotifyEnabled) return emptyList()
 
-        // Demo fallback if nothing detected
         val detected = s.detected
+
         val title = when {
             detected -> s.title
             spotifyDemoEnabled -> "Pretty Girl"
@@ -386,42 +393,34 @@ class ChatboxViewModel(
 
         if (!detected && !spotifyDemoEnabled) return emptyList()
 
-        // line 1: artist — title (drop artist if overflow)
         val safeTitle = title.ifBlank { "(blank)" }
         val safeArtist = artist.ifBlank { "" }
 
+        // line 1: artist — title (drop artist if overflow)
         val maxLine = 42
         val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
-
         val line1 = when {
             combined.length <= maxLine -> combined
-            safeTitle.length <= maxLine -> safeTitle // drop artist when overflow
+            safeTitle.length <= maxLine -> safeTitle
             else -> safeTitle.take(maxLine - 1) + "…"
         }.trim()
 
-        // Progress: freeze while paused
+        // Progress
         val dur = if (spotifyDemoEnabled && !detected) 80_000L else s.durationMs
         val pos = if (spotifyDemoEnabled && !detected) {
             58_000L
         } else {
-            // live progress only while playing, else frozen
             if (s.isPlaying) computeLivePositionMs(s) else s.positionMs
         }
 
-        val timeText = if (!s.isPlaying && (detected || spotifyDemoEnabled)) {
-            // show paused indicator
-            "⏸ Paused"
-        } else {
-            "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        }
-
         val bar = renderProgressBar(spotifyPreset, pos, max(1L, dur))
+        val timeText = if (!s.isPlaying) "⏸ Paused" else "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
         val line2 = "$bar $timeText".trim()
 
         return listOf(line1, line2).filter { it.isNotBlank() }
     }
 
-    // Live position while playing: positionMs + elapsedRealtime delta * speed
+    // live progress while playing
     private fun computeLivePositionMs(s: NowPlayingSnapshot): Long {
         val base = max(0L, s.positionMs)
         val dur = max(1L, s.durationMs)
@@ -431,51 +430,42 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Your 5 preset bars (short, 1 line, point per symbol)
+    // Your 5 preset bars (short, 1 line)
     // =========================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            // (love) ♡ + 8 inner slots + ♡
-            1 -> {
+            1 -> { // love ♡ + 8 inner + ♡
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
                 inner[idx] = '◉'
                 "♡" + inner.concatToString() + "♡"
             }
-
-            // (minimal) 10 slots
-            2 -> {
+            2 -> { // minimal
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-
-            // (crystal) 10 slots
-            3 -> {
+            3 -> { // crystal
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-
-            // (soundwave) 10 slots with ●
-            4 -> {
+            4 -> { // soundwave
                 val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
                 out[idx] = '●'
                 out.concatToString()
             }
-
-            // (geometry) 10 slots
-            else -> {
+            else -> { // geometry
                 val bg = charArrayOf('▣','▣','▣','▢','▢','▢','▢','▢','▢','▢')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
@@ -497,7 +487,7 @@ class ChatboxViewModel(
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
 
-        // Build from bottom up so Now Playing stays if we must drop something
+        // bottom-up so Now Playing stays if we must drop something
         val out = ArrayList<String>()
         var total = 0
 
