@@ -36,12 +36,12 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         // AFK persistence (TEXT ONLY)
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // AFK presets (3 slots)
+        // AFK presets (3)
         val AFK_PRESET_1 = stringPreferencesKey("afk_preset_1")
         val AFK_PRESET_2 = stringPreferencesKey("afk_preset_2")
         val AFK_PRESET_3 = stringPreferencesKey("afk_preset_3")
 
-        // Cycle presets (5 slots)
+        // Cycle presets (5) – each stores messages + interval
         val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
         val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
 
@@ -97,22 +97,26 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
     suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
 
+    // ----------------------------
     // AFK presets (3)
+    // ----------------------------
     val afkPreset1 = get(AFK_PRESET_1, "")
     val afkPreset2 = get(AFK_PRESET_2, "")
     val afkPreset3 = get(AFK_PRESET_3, "")
 
     suspend fun saveAfkPreset(slot: Int, text: String) {
-        val key = when (slot) {
-            1 -> AFK_PRESET_1
-            2 -> AFK_PRESET_2
-            else -> AFK_PRESET_3
+        val s = slot.coerceIn(1, 3)
+        dataStore.edit {
+            when (s) {
+                1 -> it[AFK_PRESET_1] = text
+                2 -> it[AFK_PRESET_2] = text
+                else -> it[AFK_PRESET_3] = text
+            }
         }
-        save(key, text)
     }
 
     // ----------------------------
-    // Cycle Presets (5 slots)
+    // Cycle presets (5)
     // ----------------------------
     val cyclePreset1Messages = get(CYCLE_PRESET_1_MESSAGES, "")
     val cyclePreset1Interval = get(CYCLE_PRESET_1_INTERVAL, 3)
