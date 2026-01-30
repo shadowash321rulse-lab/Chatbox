@@ -25,7 +25,9 @@ fun MessageField(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var tab by rememberSaveable { mutableStateOf(TabPage.Cycle) }
+
+    // IMPORTANT: use remember (not rememberSaveable) to avoid missing dependency errors
+    var tab by remember { mutableStateOf(TabPage.Cycle) }
 
     Column(
         modifier = modifier
@@ -36,9 +38,21 @@ fun MessageField(
         ElevatedCard {
             Column(Modifier.fillMaxWidth()) {
                 TabRow(selectedTabIndex = tab.ordinal) {
-                    Tab(selected = tab == TabPage.Cycle, onClick = { tab = TabPage.Cycle }, text = { Text("Cycle") })
-                    Tab(selected = tab == TabPage.NowPlaying, onClick = { tab = TabPage.NowPlaying }, text = { Text("Now Playing") })
-                    Tab(selected = tab == TabPage.Debug, onClick = { tab = TabPage.Debug }, text = { Text("Debug") })
+                    Tab(
+                        selected = tab == TabPage.Cycle,
+                        onClick = { tab = TabPage.Cycle },
+                        text = { Text("Cycle") }
+                    )
+                    Tab(
+                        selected = tab == TabPage.NowPlaying,
+                        onClick = { tab = TabPage.NowPlaying },
+                        text = { Text("Now Playing") }
+                    )
+                    Tab(
+                        selected = tab == TabPage.Debug,
+                        onClick = { tab = TabPage.Debug },
+                        text = { Text("Debug") }
+                    )
                 }
 
                 when (tab) {
@@ -47,7 +61,6 @@ fun MessageField(
                             Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-
                             // ============================
                             // AFK (above everything)
                             // ============================
@@ -78,7 +91,9 @@ fun MessageField(
                             OutlinedTextField(
                                 value = chatboxViewModel.afkIntervalSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.afkIntervalSeconds = n.coerceAtLeast(3) }
+                                    raw.toIntOrNull()?.let { n ->
+                                        chatboxViewModel.afkIntervalSeconds = n.coerceAtLeast(3)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
@@ -118,7 +133,9 @@ fun MessageField(
                             OutlinedTextField(
                                 value = chatboxViewModel.cycleIntervalSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1) }
+                                    raw.toIntOrNull()?.let { n ->
+                                        chatboxViewModel.cycleIntervalSeconds = n.coerceAtLeast(1)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
@@ -183,7 +200,9 @@ fun MessageField(
                             OutlinedTextField(
                                 value = chatboxViewModel.musicRefreshSeconds.toString(),
                                 onValueChange = { raw ->
-                                    raw.toIntOrNull()?.let { n -> chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1) }
+                                    raw.toIntOrNull()?.let { n ->
+                                        chatboxViewModel.musicRefreshSeconds = n.coerceAtLeast(1)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
@@ -306,4 +325,3 @@ fun MessageField(
         }
     }
 }
-
