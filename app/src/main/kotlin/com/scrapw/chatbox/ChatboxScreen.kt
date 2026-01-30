@@ -1,5 +1,6 @@
 package com.scrapw.chatbox
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -9,19 +10,19 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
-import kotlinx.coroutines.flow.collectLatest
 
 private enum class AppPage(val title: String) {
     Dashboard("Dashboard"),
@@ -34,7 +35,7 @@ private enum class AppPage(val title: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatboxScreen(
-    chatboxViewModel: ChatboxViewModel
+    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory)
 ) {
     var page by rememberSaveable { mutableStateOf(AppPage.Dashboard) }
 
@@ -43,7 +44,6 @@ fun ChatboxScreen(
             CenterAlignedTopAppBar(
                 title = { Text("VRC-A") },
                 actions = {
-                    // quick "send once" on Now Playing page, SlimeVR-ish convenience
                     if (page == AppPage.NowPlaying) {
                         IconButton(onClick = { chatboxViewModel.sendNowPlayingOnce() }) {
                             Icon(Icons.Filled.Send, contentDescription = "Send now playing once")
@@ -53,13 +53,10 @@ fun ChatboxScreen(
             )
         },
         bottomBar = {
-            NavigationBar {
-                NavItem(AppPage.Dashboard, page, Icons.Filled.Home) { page = it }
-                NavItem(AppPage.Cycle, page, Icons.Filled.Sync) { page = it }
-                NavItem(AppPage.NowPlaying, page, Icons.Filled.MusicNote) { page = it }
-                NavItem(AppPage.Debug, page, Icons.Filled.BugReport) { page = it }
-                NavItem(AppPage.Settings, page, Icons.Filled.Settings) { page = it }
-            }
+            SlimBottomBar(
+                current = page,
+                onSelect = { page = it }
+            )
         }
     ) { padding ->
         Box(
@@ -72,25 +69,59 @@ fun ChatboxScreen(
                 AppPage.Cycle -> CyclePage(chatboxViewModel)
                 AppPage.NowPlaying -> NowPlayingPage(chatboxViewModel)
                 AppPage.Debug -> DebugPage(chatboxViewModel)
-                AppPage.Settings -> SettingsPage(chatboxViewModel)
+                AppPage.Settings -> SettingsPage()
             }
         }
     }
 }
 
+/**
+ * Compatible bottom bar that does NOT depend on NavigationBarItem.
+ * (Fixes your "Unresolved reference: NavigationBarItem" build error.)
+ */
 @Composable
-private fun NavItem(
-    item: AppPage,
+private fun SlimBottomBar(
+    current: AppPage,
+    onSelect: (AppPage) -> Unit
+) {
+    Surface(tonalElevation = 3.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomTab(AppPage.Dashboard, current, Icons.Filled.Home, onSelect)
+            BottomTab(AppPage.Cycle, current, Icons.Filled.Sync, onSelect)
+            BottomTab(AppPage.NowPlaying, current, Icons.Filled.MusicNote, onSelect)
+            BottomTab(AppPage.Debug, current, Icons.Filled.BugReport, onSelect)
+            BottomTab(AppPage.Settings, current, Icons.Filled.Settings, onSelect)
+        }
+    }
+}
+
+@Composable
+private fun BottomTab(
+    page: AppPage,
     current: AppPage,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: (AppPage) -> Unit
+    onSelect: (AppPage) -> Unit
 ) {
-    NavigationBarItem(
-        selected = current == item,
-        onClick = { onClick(item) },
-        icon = { Icon(icon, contentDescription = item.title) },
-        label = { Text(item.title) }
-    )
+    val selected = page == current
+    val contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        Modifier
+            .widthIn(min = 64.dp)
+            .clickable { onSelect(page) }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = page.title, tint = contentColor)
+        Spacer(Modifier.height(2.dp))
+        Text(page.title, style = MaterialTheme.typography.labelSmall, color = contentColor, maxLines = 1)
+    }
 }
 
 @Composable
@@ -129,18 +160,16 @@ private fun SectionCard(
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
 
-    // Keep a local input field so the IP field isn't "buggy" / fighting state
+    // Local input so typing doesn't fight the flow/state (fixes "buggy IP typing" feel)
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
     LaunchedEffect(uiState.ipAddress) {
-        // only update if user hasn't started editing to something else
-        if (ipInput.isBlank() || ipInput == "127.0.0.1") ipInput = uiState.ipAddress
+        if (ipInput.isBlank()) ipInput = uiState.ipAddress
     }
 
     PageContainer {
-
         SectionCard(
             title = "Connection",
-            subtitle = "Set your VRChat device IP (Quest/Phone) then Apply."
+            subtitle = "Enter your headset/phone IP then tap Apply."
         ) {
             OutlinedTextField(
                 value = ipInput,
@@ -164,33 +193,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 ) { Text("Reset") }
             }
 
-            Text(
-                "Current target: ${uiState.ipAddress}",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        SectionCard(
-            title = "Quick Status",
-            subtitle = "These are the two blocks that can send text to VRChat."
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                AssistChip(
-                    onClick = { /* no-op */ },
-                    label = { Text(if (vm.cycleEnabled) "Cycle: ON" else "Cycle: OFF") },
-                    leadingIcon = { Icon(Icons.Filled.Sync, contentDescription = null) }
-                )
-                AssistChip(
-                    onClick = { /* no-op */ },
-                    label = { Text(if (vm.spotifyEnabled) "Now Playing: ON" else "Now Playing: OFF") },
-                    leadingIcon = { Icon(Icons.Filled.MusicNote, contentDescription = null) }
-                )
-            }
-
-            Text(
-                "Tip: Use the Cycle page for rotating lines, and Now Playing page for music block.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Current target: ${uiState.ipAddress}", style = MaterialTheme.typography.bodySmall)
         }
 
         SectionCard(
@@ -201,15 +204,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 value = vm.messageText.value,
                 onValueChange = { vm.onMessageTextChange(it) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = false,
                 minLines = 2,
                 label = { Text("Message") }
             )
-
-            Button(
-                onClick = { vm.sendMessage() },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Send") }
+            Button(onClick = { vm.sendMessage() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Send")
+            }
         }
     }
 }
@@ -220,10 +220,8 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "AFK (top line)",
-            subtitle = "Shows above Cycle + Now Playing. (We’ll wire separate AFK delay next.)"
+            subtitle = "AFK shows above Cycle + Now Playing."
         ) {
-            // NOTE: these fields must exist in your VM (afkEnabled/afkMessage + sendAfkNow)
-            // If your current VM doesn’t have them yet, tell me and I’ll send the VM replacement.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("AFK enabled")
                 Switch(
@@ -240,16 +238,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("AFK text") }
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { vm.sendAfkNow() }, modifier = Modifier.weight(1f)) {
-                    Text("Send AFK once")
-                }
-            }
+            Button(
+                onClick = { vm.sendAfkNow() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Send AFK once") }
         }
 
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Rotates your lines. Now Playing always stays underneath automatically."
+            subtitle = "Rotates your lines. Now Playing stays underneath automatically."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Cycle enabled")
@@ -267,8 +264,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 onValueChange = { vm.cycleMessages = it },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 4,
-                label = { Text("Lines (one per line)") },
-                placeholder = { Text("Hello!\nBe kind 💕\n…") }
+                label = { Text("Lines (one per line)") }
             )
 
             OutlinedTextField(
@@ -283,12 +279,8 @@ private fun CyclePage(vm: ChatboxViewModel) {
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) {
-                    Text("Start")
-                }
-                OutlinedButton(onClick = { vm.stopCycle() }, modifier = Modifier.weight(1f)) {
-                    Text("Stop")
-                }
+                Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) { Text("Start") }
+                OutlinedButton(onClick = { vm.stopCycle() }, modifier = Modifier.weight(1f)) { Text("Stop") }
             }
         }
     }
@@ -299,10 +291,9 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
 
     PageContainer {
-
         SectionCard(
             title = "Now Playing (phone music)",
-            subtitle = "Uses Notification Access. Works with Spotify / YouTube Music / etc (any media notification)."
+            subtitle = "Uses Notification Access. Works with Spotify/YouTube Music/etc."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Enable Now Playing block")
@@ -313,7 +304,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Demo mode (for testing)")
+                Text("Demo mode (testing)")
                 Switch(
                     checked = vm.spotifyDemoEnabled,
                     onCheckedChange = { vm.setSpotifyDemoFlag(it) }
@@ -323,11 +314,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             OutlinedButton(
                 onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Open Notification Access settings")
-            }
+            ) { Text("Open Notification Access settings") }
 
             OutlinedTextField(
                 value = vm.musicRefreshSeconds.toString(),
@@ -357,14 +344,8 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { vm.startNowPlayingSender() }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Start")
-                }
-                OutlinedButton(onClick = { vm.stopNowPlayingSender() }, modifier = Modifier.weight(1f)) {
-                    Text("Stop")
-                }
+                Button(onClick = { vm.startNowPlayingSender() }, modifier = Modifier.weight(1f)) { Text("Start") }
+                OutlinedButton(onClick = { vm.stopNowPlayingSender() }, modifier = Modifier.weight(1f)) { Text("Stop") }
             }
 
             OutlinedButton(
@@ -374,20 +355,14 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "Preview / Detected",
-            subtitle = "If this stays blank: enable access, restart the app, then play music."
+            title = "Detected / Preview",
+            subtitle = "If blank: enable access, restart app, then play music."
         ) {
             Text("Detected: ${vm.nowPlayingDetected}")
             Text("Artist: ${vm.lastNowPlayingArtist}")
             Text("Title: ${vm.lastNowPlayingTitle}")
             Text("App: ${vm.activePackage}")
-
-            // If your VM exposes playing state, show it:
-            if (vm.nowPlayingIsPlaying) {
-                Text("Status: Playing")
-            } else {
-                Text("Status: Paused")
-            }
+            Text("Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
         }
     }
 }
@@ -396,8 +371,8 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 private fun DebugPage(vm: ChatboxViewModel) {
     PageContainer {
         SectionCard(
-            title = "Now Playing Listener",
-            subtitle = "This helps confirm your permissions and whether media is detected."
+            title = "Listener",
+            subtitle = "Confirms Notification Access + media detection."
         ) {
             Text("Listener connected: ${vm.listenerConnected}")
             Text("Active package: ${vm.activePackage}")
@@ -406,60 +381,25 @@ private fun DebugPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "Last Sent",
-            subtitle = "Confirms if text is actually being pushed to VRChat over OSC."
-        ) {
-            Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
-            Text(
-                "If you see it sending but VRChat shows nothing:\n" +
-                    "• Check the IP\n" +
-                    "• Make sure OSC is enabled in VRChat\n" +
-                    "• Ensure both devices are on the same Wi-Fi",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        SectionCard(
-            title = "Troubleshooting checklist",
+            title = "VRChat send status",
             subtitle = null
         ) {
-            Text(
-                "If Now Playing won’t detect:\n" +
-                    "1) Settings → Notification access → enable VRC-A\n" +
-                    "2) Restart VRC-A\n" +
-                    "3) Start music (Spotify/YouTube Music/etc)\n" +
-                    "4) Pause/Play once to force a media session update\n\n" +
-                    "If it detects random notifications:\n" +
-                    "• Only media notifications should be used — we can filter to media sessions only in the service.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
 
 @Composable
-private fun SettingsPage(vm: ChatboxViewModel) {
+private fun SettingsPage() {
     PageContainer {
         SectionCard(
-            title = "App",
-            subtitle = "Basic app settings. (We’ll add theme toggle/polish after stability.)"
-        ) {
-            Text(
-                "VRC-A = VRChat Assistant\nMade by Ashoska Mitsu Sisko\nBased on ScrapW’s base, fully revamped.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-
-        SectionCard(
-            title = "Info",
+            title = "About",
             subtitle = null
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null)
-                Text(
-                    "Logo changes are done by replacing launcher icon resources (instructions below).",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Spacer(Modifier.width(8.dp))
+                Text("VRC-A = VRChat Assistant\nMade by Ashoska Mitsu Sisko\nBased on ScrapW’s base, fully revamped.")
             }
         }
     }
