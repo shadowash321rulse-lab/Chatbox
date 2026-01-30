@@ -4,9 +4,19 @@
     <!-- App -->
     <string name="app_name">VRC-A</string>
 
-    <!-- Common buttons / labels -->
+    <!-- Common / navigation -->
     <string name="back_button">Back</string>
     <string name="settings_button">Settings</string>
+    <string name="settings">Settings</string>
+
+    <!-- Generic buttons -->
+    <string name="send">Send</string>
+
+    <!-- Message input -->
+    <string name="write_a_message">Write a message</string>
+
+    <!-- Validation -->
+    <string name="invalid_ip_address">Invalid IP address</string>
 
     <!-- Overlay -->
     <string name="overlay_permission_request">Please allow “Display over other apps” so the overlay can work.</string>
@@ -51,7 +61,12 @@
     <string name="msg_send_immediately_long">Send immediately</string>
     <string name="msg_send_immediately_short">Direct</string>
 
-    <!-- Settings: Floating button / overlay -->
+    <!-- Settings: UI / layout toggles -->
+    <string name="layout">Layout</string>
+    <string name="display_ip_edit_bar">Show IP edit bar</string>
+    <string name="display_message_options">Show message options</string>
+
+    <!-- Settings: overlay toggles -->
     <string name="floating_button">Floating button</string>
     <string name="enable_chatbox_floating_button">Enable floating button</string>
     <string name="it_can_help_to_send_chatbox_in_vrchat_mobile_desc">Shows a small overlay button for quick access.</string>
@@ -62,19 +77,22 @@
     <string name="send_to_localhost">Send to localhost</string>
     <string name="send_to_localhost_desc">Sends OSC to localhost (useful for testing).</string>
 
-    <!-- Settings: Layout -->
-    <string name="layout">Layout</string>
-    <string name="display_ip_edit_bar">Show IP edit bar</string>
-    <string name="display_message_options">Show message options</string>
+    <!-- Settings: extra toggles (these were missing and got stripped) -->
+    <string name="fullscreen">Fullscreen</string>
+    <string name="fullscreen_desc">Use a fullscreen layout (hides system bars where possible).</string>
+
+    <string name="always_show_keyboard">Always show keyboard</string>
+    <string name="always_show_keyboard_desc">Opens the keyboard automatically when the app opens.</string>
 
     <!-- Settings: Accessibility -->
     <string name="accessibility">Accessibility</string>
     <string name="button_haptic">Button haptics</string>
     <string name="button_haptic_desc">Vibrate a little when pressing buttons.</string>
 
-    <!-- Settings: Info / About / FAQ (these can exist even if you later hide the pages) -->
+    <!-- About / Dependencies (even if you later remove the menu, code still references these right now) -->
     <string name="information">Information</string>
-    <string name="faq">FAQ</string>
+    <string name="about">About</string>
+    <string name="dependencies">Dependencies</string>
 
     <!-- About screen strings -->
     <string name="project">Project</string>
