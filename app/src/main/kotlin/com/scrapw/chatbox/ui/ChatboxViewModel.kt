@@ -68,6 +68,44 @@ class ChatboxViewModel(
     }
 
     // =========================
+    // Info doc (used by ChatboxScreen)
+    // =========================
+    val fullInfoDocumentText: String = """
+VRC-A (VRChat Assistant)
+Made by: Ashoska Mitsu Sisko
+Base: ScrapW’s Chatbox base (heavily revamped)
+
+============================================================
+WHAT THIS APP IS
+============================================================
+VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
+It’s meant for standalone / mobile-friendly setups where you want:
+- A quick “Send message” tool
+- A cycling status / rotating messages system
+- A live “Now Playing” music block (from your phone’s media notifications)
+- An AFK tag at the very top
+
+VRC-A is designed to be “easy to test” with debug indicators so you can tell
+what’s failing (connection, permissions, detection, etc).
+
+============================================================
+IMPORTANT: VRChat OSC MUST BE ON
+============================================================
+VRChat → Settings → OSC → Enable OSC.
+
+============================================================
+TROUBLESHOOT
+============================================================
+- Nothing in VRChat: check IP + OSC + same Wi-Fi
+- Now Playing blank: enable Notification Access + restart app
+- Progress not moving: depends on music player
+
+============================================================
+END
+============================================================
+""".trimIndent()
+
+    // =========================
     // Conversation / manual messages
     // =========================
     val conversationUiState = ConversationUiState()
@@ -151,7 +189,7 @@ class ChatboxViewModel(
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
-            triggerSFX = false // hard disable sound
+            triggerSFX = false // sound disabled
         )
         osc.typing = false
 
@@ -222,7 +260,6 @@ class ChatboxViewModel(
     var cycleIntervalSeconds by mutableStateOf(3)
     private var cycleJob: Job? = null
     private var cycleIndex = 0
-
     val cycleLines = mutableStateListOf<String>()
 
     // =========================
@@ -265,18 +302,6 @@ class ChatboxViewModel(
     private val musicPresetNames = listOf("Love", "Minimal", "Crystal", "Soundwave", "Geometry")
     fun getMusicPresetName(preset: Int): String = musicPresetNames[preset.coerceIn(1, 5) - 1]
 
-    fun renderMusicPresetPreview(preset: Int, fraction01: Float): String {
-        val f = fraction01.coerceIn(0f, 1f)
-        val dur = 100_000L
-        val pos = (dur * f).toLong()
-        return renderProgressBar(preset, pos, dur)
-    }
-
-    // Preset caches
-    private val afkPresetTexts = arrayOf("", "", "")
-    private val cyclePresetMessages = arrayOf("", "", "", "", "")
-    private val cyclePresetIntervals = intArrayOf(3, 3, 3, 3, 3)
-
     init {
         // AFK main text
         viewModelScope.launch {
@@ -295,27 +320,6 @@ class ChatboxViewModel(
         viewModelScope.launch {
             userPreferencesRepository.cycleInterval.collect { cycleIntervalSeconds = it.coerceAtLeast(2) }
         }
-
-        // AFK preset slots
-        viewModelScope.launch { userPreferencesRepository.afkPreset1.collect { afkPresetTexts[0] = it } }
-        viewModelScope.launch { userPreferencesRepository.afkPreset2.collect { afkPresetTexts[1] = it } }
-        viewModelScope.launch { userPreferencesRepository.afkPreset3.collect { afkPresetTexts[2] = it } }
-
-        // Cycle preset slots 1..5
-        viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetMessages[0] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervals[0] = it.coerceAtLeast(2) } }
-
-        viewModelScope.launch { userPreferencesRepository.cyclePreset2Messages.collect { cyclePresetMessages[1] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset2Interval.collect { cyclePresetIntervals[1] = it.coerceAtLeast(2) } }
-
-        viewModelScope.launch { userPreferencesRepository.cyclePreset3Messages.collect { cyclePresetMessages[2] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset3Interval.collect { cyclePresetIntervals[2] = it.coerceAtLeast(2) } }
-
-        viewModelScope.launch { userPreferencesRepository.cyclePreset4Messages.collect { cyclePresetMessages[3] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset4Interval.collect { cyclePresetIntervals[3] = it.coerceAtLeast(2) } }
-
-        viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetMessages[4] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervals[4] = it.coerceAtLeast(2) } }
 
         // NowPlaying
         viewModelScope.launch {
@@ -384,65 +388,9 @@ class ChatboxViewModel(
     private fun persistCycleEnabled() = viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
     private fun persistCycleInterval() = viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2)) }
 
-    // Preset previews
-    fun getAfkPresetPreview(slot: Int): String {
-        val i = slot.coerceIn(1, 3) - 1
-        return afkPresetTexts[i].trim()
-    }
-
-    fun getCyclePresetPreview(slot: Int): String {
-        val i = slot.coerceIn(1, 5) - 1
-        return cyclePresetMessages[i].lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-    }
-
-    // Preset load/save
-    suspend fun saveAfkPreset(slot: Int, text: String) {
-        when (slot.coerceIn(1, 3)) {
-            1 -> userPreferencesRepository.saveAfkPreset1(text)
-            2 -> userPreferencesRepository.saveAfkPreset2(text)
-            else -> userPreferencesRepository.saveAfkPreset3(text)
-        }
-    }
-
-    suspend fun loadAfkPreset(slot: Int) {
-        val txt = when (slot.coerceIn(1, 3)) {
-            1 -> userPreferencesRepository.afkPreset1.first()
-            2 -> userPreferencesRepository.afkPreset2.first()
-            else -> userPreferencesRepository.afkPreset3.first()
-        }
-        updateAfkText(txt)
-    }
-
-    suspend fun saveCyclePreset(slot: Int, lines: List<String>) {
-        val messages = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
-        val interval = cycleIntervalSeconds.coerceAtLeast(2)
-        when (slot.coerceIn(1, 5)) {
-            1 -> userPreferencesRepository.saveCyclePreset1(messages, interval)
-            2 -> userPreferencesRepository.saveCyclePreset2(messages, interval)
-            3 -> userPreferencesRepository.saveCyclePreset3(messages, interval)
-            4 -> userPreferencesRepository.saveCyclePreset4(messages, interval)
-            else -> userPreferencesRepository.saveCyclePreset5(messages, interval)
-        }
-    }
-
-    suspend fun loadCyclePreset(slot: Int) {
-        val (messages, interval) = when (slot.coerceIn(1, 5)) {
-            1 -> userPreferencesRepository.cyclePreset1Messages.first() to userPreferencesRepository.cyclePreset1Interval.first()
-            2 -> userPreferencesRepository.cyclePreset2Messages.first() to userPreferencesRepository.cyclePreset2Interval.first()
-            3 -> userPreferencesRepository.cyclePreset3Messages.first() to userPreferencesRepository.cyclePreset3Interval.first()
-            4 -> userPreferencesRepository.cyclePreset4Messages.first() to userPreferencesRepository.cyclePreset4Interval.first()
-            else -> userPreferencesRepository.cyclePreset5Messages.first() to userPreferencesRepository.cyclePreset5Interval.first()
-        }
-        cycleIntervalSeconds = interval.coerceAtLeast(2)
-        persistCycleInterval()
-        setCycleLinesFromText(messages)
-        persistCycleLines()
-    }
-
     fun notificationAccessIntent(): Intent =
         Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    // Music flags
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
         rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
@@ -460,9 +408,8 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // START/STOP (fixed so Stop actually disables, preventing auto-retoggle)
+    // START/STOP (Stop disables flags to prevent auto-retoggle)
     // =========================
-
     fun startAfkSender(local: Boolean = false) {
         if (!afkEnabled) return
         afkJob?.cancel()
@@ -478,6 +425,7 @@ class ChatboxViewModel(
         afkEnabled = false
         afkJob?.cancel()
         afkJob = null
+
         if (clearFromChatbox) {
             rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true, ignoreThrottle = true)
         } else {
@@ -572,7 +520,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Combined builder + throttled sender (with stop-bypass)
+    // Combined builder + throttled sender
     // =========================
     private fun rebuildAndMaybeSendCombined(
         forceSend: Boolean,
@@ -618,7 +566,6 @@ class ChatboxViewModel(
     }
 
     private fun clearChatbox(local: Boolean = false, ignoreThrottle: Boolean = false) {
-        // Always bypass throttle when clearing so it updates instantly
         sendToVrchatRaw("", local, addToConversation = false)
         if (!ignoreThrottle) lastCombinedSendMs = System.currentTimeMillis()
     }
@@ -703,15 +650,14 @@ class ChatboxViewModel(
                 out.concatToString()
             }
             else -> {
-                // GEOMETRY (filled blocks grow with progress)
-                // Example: ▣▣▣▣◉▢▢▢▢▢   as it progresses
+                // Geometry: fills behind the dot
+                // ▣ grows as progress grows, ▢ is empty.
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
 
                 val out = CharArray(slots) { '▢' }
-                for (i in 0 until idx) out[i] = '▣' // fill behind the dot
-                out[idx] = '◉' // position dot
-
+                for (i in 0 until idx) out[i] = '▣'
+                out[idx] = '◉'
                 out.concatToString()
             }
         }
