@@ -192,6 +192,8 @@ class ChatboxViewModel(
     // =========================
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
+        private set
+
     fun checkUpdate() {
         if (updateChecked) return
         updateChecked = true
@@ -209,28 +211,36 @@ class ChatboxViewModel(
     private var lastCombinedSendMs = 0L
 
     // =========================
-    // AFK
+    // AFK (TEXT persists, enabled does NOT persist)
     // =========================
     var afkEnabled by mutableStateOf(false)
+
     var afkMessage by mutableStateOf("")
         private set
 
-    var afkPresetSlot by mutableStateOf(1)
-
     private val afkForcedIntervalSeconds = 12 // forced, no UI slider
     private var afkJob: Job? = null
+
+    // AFK Presets (3) - name + text (both persist)
+    private val afkPresetNameState = Array(3) { mutableStateOf("Preset ${it + 1}") }
+    private val afkPresetTextState = Array(3) { mutableStateOf("") }
 
     // =========================
     // Cycle
     // =========================
     var cycleEnabled by mutableStateOf(false)
     var cycleIntervalSeconds by mutableStateOf(3)
+
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
     // New: cycle lines list (max 10)
     val cycleLines = mutableStateListOf<String>()
-    var cyclePresetSlot by mutableStateOf(1)
+
+    // Cycle Presets (5) - name + messages + interval (persist)
+    private val cyclePresetNameState = Array(5) { mutableStateOf("Preset ${it + 1}") }
+    private val cyclePresetMessagesState = Array(5) { mutableStateOf("") }
+    private val cyclePresetIntervalState = Array(5) { mutableStateOf(3) }
 
     // =========================
     // Now Playing (phone music) – UI still calls these “spotify”
@@ -247,11 +257,17 @@ class ChatboxViewModel(
 
     // Debug fields shown in UI
     var listenerConnected by mutableStateOf(false)
+        private set
     var activePackage by mutableStateOf("(none)")
+        private set
     var nowPlayingDetected by mutableStateOf(false)
+        private set
     var lastNowPlayingTitle by mutableStateOf("(blank)")
+        private set
     var lastNowPlayingArtist by mutableStateOf("(blank)")
+        private set
     var lastSentToVrchatAtMs by mutableStateOf(0L)
+        private set
 
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
@@ -306,25 +322,20 @@ END
 """.trimIndent()
 
     // =========================
-    // Presets (DataStore-backed)
+    // Init: bind DataStore flows
     // =========================
-    private val afkPresetTexts = arrayOf("", "", "")
-    private val cyclePresetMessages = arrayOf("", "", "", "", "")
-    private val cyclePresetIntervals = intArrayOf(3, 3, 3, 3, 3)
-
     init {
-        // Load persisted AFK text
+        // AFK text persists
         viewModelScope.launch {
             userPreferencesRepository.afkMessage.collect { afkMessage = it }
         }
 
-        // Load cycle persisted enabled/messages/interval
+        // Cycle state (enabled/messages/interval)
         viewModelScope.launch {
             userPreferencesRepository.cycleEnabled.collect { cycleEnabled = it }
         }
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
-                // Convert string -> list, enforce max 10
                 setCycleLinesFromText(text)
             }
         }
@@ -332,32 +343,36 @@ END
             userPreferencesRepository.cycleInterval.collect { cycleIntervalSeconds = it.coerceAtLeast(2) }
         }
 
-        // Load AFK preset slots (3)
-        viewModelScope.launch {
-            userPreferencesRepository.afkPreset1.collect { afkPresetTexts[0] = it }
-        }
-        viewModelScope.launch {
-            userPreferencesRepository.afkPreset2.collect { afkPresetTexts[1] = it }
-        }
-        viewModelScope.launch {
-            userPreferencesRepository.afkPreset3.collect { afkPresetTexts[2] = it }
-        }
+        // AFK preset names + texts (3)
+        viewModelScope.launch { userPreferencesRepository.afkPreset1Name.collect { afkPresetNameState[0].value = it } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset1Text.collect { afkPresetTextState[0].value = it } }
 
-        // Load Cycle preset slots (5)
-        viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetMessages[0] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervals[0] = it.coerceAtLeast(2) } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset2Name.collect { afkPresetNameState[1].value = it } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset2Text.collect { afkPresetTextState[1].value = it } }
 
-        viewModelScope.launch { userPreferencesRepository.cyclePreset2Messages.collect { cyclePresetMessages[1] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset2Interval.collect { cyclePresetIntervals[1] = it.coerceAtLeast(2) } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset3Name.collect { afkPresetNameState[2].value = it } }
+        viewModelScope.launch { userPreferencesRepository.afkPreset3Text.collect { afkPresetTextState[2].value = it } }
 
-        viewModelScope.launch { userPreferencesRepository.cyclePreset3Messages.collect { cyclePresetMessages[2] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset3Interval.collect { cyclePresetIntervals[2] = it.coerceAtLeast(2) } }
+        // Cycle preset names + messages + intervals (5)
+        viewModelScope.launch { userPreferencesRepository.cyclePreset1Name.collect { cyclePresetNameState[0].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetMessagesState[0].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervalState[0].value = it.coerceAtLeast(2) } }
 
-        viewModelScope.launch { userPreferencesRepository.cyclePreset4Messages.collect { cyclePresetMessages[3] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset4Interval.collect { cyclePresetIntervals[3] = it.coerceAtLeast(2) } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset2Name.collect { cyclePresetNameState[1].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset2Messages.collect { cyclePresetMessagesState[1].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset2Interval.collect { cyclePresetIntervalState[1].value = it.coerceAtLeast(2) } }
 
-        viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetMessages[4] = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervals[4] = it.coerceAtLeast(2) } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset3Name.collect { cyclePresetNameState[2].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset3Messages.collect { cyclePresetMessagesState[2].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset3Interval.collect { cyclePresetIntervalState[2].value = it.coerceAtLeast(2) } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset4Name.collect { cyclePresetNameState[3].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset4Messages.collect { cyclePresetMessagesState[3].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset4Interval.collect { cyclePresetIntervalState[3].value = it.coerceAtLeast(2) } }
+
+        viewModelScope.launch { userPreferencesRepository.cyclePreset5Name.collect { cyclePresetNameState[4].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetMessagesState[4].value = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervalState[4].value = it.coerceAtLeast(2) } }
 
         // Bind NowPlayingState into fields
         viewModelScope.launch {
@@ -378,7 +393,14 @@ END
     }
 
     // =========================
-    // AFK text update (persists)
+    // Notification Access intent
+    // =========================
+    fun notificationAccessIntent(): Intent {
+        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    // =========================
+    // AFK text update (persists) + immediate rebuild
     // =========================
     fun updateAfkText(text: String) {
         afkMessage = text
@@ -387,7 +409,7 @@ END
     }
 
     // =========================
-    // Cycle lines management (persists as joined string)
+    // Cycle persistence + list editing (max 10)
     // =========================
     private fun setCycleLinesFromText(text: String) {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(10)
@@ -427,89 +449,108 @@ END
         rebuildAndMaybeSendCombined(forceSend = false)
     }
 
-    // Save basic cycle settings
-    private fun persistCycleEnabled() = viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
-    private fun persistCycleInterval() = viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2)) }
-
-    // =========================
-    // Preset previews
-    // =========================
-    fun getAfkPresetPreview(slot: Int): String {
-        val i = slot.coerceIn(1, 3) - 1
-        return afkPresetTexts[i].trim()
+    fun persistCycleEnabledNow() {
+        viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
     }
 
-    fun getCyclePresetPreview(slot: Int): String {
+    fun updateCycleInterval(seconds: Int) {
+        cycleIntervalSeconds = seconds.coerceAtLeast(2)
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
+    }
+
+    // =========================
+    // AFK Presets UI API (3)
+    // =========================
+    fun getAfkPresetName(slot: Int): String {
+        val i = slot.coerceIn(1, 3) - 1
+        return afkPresetNameState[i].value
+    }
+
+    fun updateAfkPresetName(slot: Int, name: String) {
+        val i = slot.coerceIn(1, 3) - 1
+        afkPresetNameState[i].value = name
+        // save name but keep existing text
+        val text = afkPresetTextState[i].value
+        viewModelScope.launch { userPreferencesRepository.saveAfkPreset(slot.coerceIn(1, 3), name, text) }
+    }
+
+    fun getAfkPresetTextPreview(slot: Int): String {
+        val i = slot.coerceIn(1, 3) - 1
+        return afkPresetTextState[i].value.trim()
+    }
+
+    fun loadAfkPresetSlot(slot: Int) {
+        val i = slot.coerceIn(1, 3) - 1
+        updateAfkText(afkPresetTextState[i].value)
+    }
+
+    fun saveAfkPresetSlot(slot: Int) {
+        val i = slot.coerceIn(1, 3) - 1
+        val name = afkPresetNameState[i].value
+        val text = afkMessage
+        afkPresetTextState[i].value = text // instant UI update
+        viewModelScope.launch { userPreferencesRepository.saveAfkPreset(slot.coerceIn(1, 3), name, text) }
+    }
+
+    // =========================
+    // Cycle Presets UI API (5)
+    // =========================
+    fun getCyclePresetName(slot: Int): String {
         val i = slot.coerceIn(1, 5) - 1
-        val firstLine = cyclePresetMessages[i].lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        return cyclePresetNameState[i].value
+    }
+
+    fun updateCyclePresetName(slot: Int, name: String) {
+        val i = slot.coerceIn(1, 5) - 1
+        cyclePresetNameState[i].value = name
+
+        val messages = cyclePresetMessagesState[i].value
+        val interval = cyclePresetIntervalState[i].value
+        viewModelScope.launch {
+            userPreferencesRepository.saveCyclePreset(slot.coerceIn(1, 5), name, messages, interval)
+        }
+    }
+
+    fun getCyclePresetFirstLinePreview(slot: Int): String {
+        val i = slot.coerceIn(1, 5) - 1
+        val firstLine = cyclePresetMessagesState[i].value
+            .lines()
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            .orEmpty()
         return firstLine
     }
 
-    fun getMusicPresetPreview(preset: Int): String {
-        return when (preset.coerceIn(1, 5)) {
-            1 -> "♡━━━◉━━━━♡"
-            2 -> "──◉────────"
-            3 -> "⟡⟡⟡◉⟡⟡⟡⟡⟡"
-            4 -> "▁▂▃▄▅●▅▄▃▂▁"
-            else -> "▣▣▣◉▢▢▢▢▢▢"
-        }
-    }
+    fun loadCyclePresetSlot(slot: Int) {
+        val i = slot.coerceIn(1, 5) - 1
+        val messages = cyclePresetMessagesState[i].value
+        val interval = cyclePresetIntervalState[i].value.coerceAtLeast(2)
 
-    // =========================
-    // Preset load/save (suspend-friendly)
-    // =========================
-    suspend fun saveAfkPreset(slot: Int, text: String) {
-        when (slot.coerceIn(1, 3)) {
-            1 -> userPreferencesRepository.saveAfkPreset1(text)
-            2 -> userPreferencesRepository.saveAfkPreset2(text)
-            else -> userPreferencesRepository.saveAfkPreset3(text)
-        }
-    }
+        cycleIntervalSeconds = interval
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
 
-    suspend fun loadAfkPreset(slot: Int) {
-        val txt = when (slot.coerceIn(1, 3)) {
-            1 -> userPreferencesRepository.afkPreset1.first()
-            2 -> userPreferencesRepository.afkPreset2.first()
-            else -> userPreferencesRepository.afkPreset3.first()
-        }
-        updateAfkText(txt)
-    }
-
-    suspend fun saveCyclePreset(slot: Int, lines: List<String>) {
-        val messages = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
-        val interval = cycleIntervalSeconds.coerceAtLeast(2)
-        when (slot.coerceIn(1, 5)) {
-            1 -> userPreferencesRepository.saveCyclePreset1(messages, interval)
-            2 -> userPreferencesRepository.saveCyclePreset2(messages, interval)
-            3 -> userPreferencesRepository.saveCyclePreset3(messages, interval)
-            4 -> userPreferencesRepository.saveCyclePreset4(messages, interval)
-            else -> userPreferencesRepository.saveCyclePreset5(messages, interval)
-        }
-    }
-
-    suspend fun loadCyclePreset(slot: Int) {
-        val (messages, interval) = when (slot.coerceIn(1, 5)) {
-            1 -> userPreferencesRepository.cyclePreset1Messages.first() to userPreferencesRepository.cyclePreset1Interval.first()
-            2 -> userPreferencesRepository.cyclePreset2Messages.first() to userPreferencesRepository.cyclePreset2Interval.first()
-            3 -> userPreferencesRepository.cyclePreset3Messages.first() to userPreferencesRepository.cyclePreset3Interval.first()
-            4 -> userPreferencesRepository.cyclePreset4Messages.first() to userPreferencesRepository.cyclePreset4Interval.first()
-            else -> userPreferencesRepository.cyclePreset5Messages.first() to userPreferencesRepository.cyclePreset5Interval.first()
-        }
-        cycleIntervalSeconds = interval.coerceAtLeast(2)
-        persistCycleInterval()
         setCycleLinesFromText(messages)
         persistCycleLines()
+        rebuildAndMaybeSendCombined(forceSend = false)
+    }
+
+    fun saveCyclePresetSlot(slot: Int) {
+        val i = slot.coerceIn(1, 5) - 1
+
+        val name = cyclePresetNameState[i].value
+        val messages = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
+        val interval = cycleIntervalSeconds.coerceAtLeast(2)
+
+        cyclePresetMessagesState[i].value = messages
+        cyclePresetIntervalState[i].value = interval
+
+        viewModelScope.launch {
+            userPreferencesRepository.saveCyclePreset(slot.coerceIn(1, 5), name, messages, interval)
+        }
     }
 
     // =========================
-    // Notification Access intent
-    // =========================
-    fun notificationAccessIntent(): Intent {
-        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    // =========================
-    // Music flags
+    // Music: flags + preset selector
     // =========================
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
@@ -525,6 +566,52 @@ END
     fun updateSpotifyPreset(preset: Int) {
         spotifyPreset = preset.coerceIn(1, 5)
         rebuildAndMaybeSendCombined(forceSend = true)
+    }
+
+    /**
+     * UI animated preview helper (t = 0..1).
+     * This does NOT affect sending, it is only for the Now Playing preset preview list.
+     */
+    fun renderMusicPreview(presetId: Int, t: Float): String {
+        val p = t.coerceIn(0f, 1f)
+        val slots = when (presetId.coerceIn(1, 5)) {
+            1 -> 8
+            2 -> 10
+            3 -> 10
+            4 -> 10
+            else -> 10
+        }
+        val idx = (p * (slots - 1)).toInt().coerceIn(0, slots - 1)
+
+        return when (presetId.coerceIn(1, 5)) {
+            1 -> { // Love
+                val inner = CharArray(8) { '━' }
+                inner[idx.coerceIn(0, 7)] = '◉'
+                "♡" + inner.concatToString() + "♡"
+            }
+            2 -> { // Minimal
+                val bg = CharArray(10) { '─' }
+                bg[idx] = '◉'
+                bg.concatToString()
+            }
+            3 -> { // Crystal
+                val bg = CharArray(10) { '⟡' }
+                bg[idx] = '◉'
+                bg.concatToString()
+            }
+            4 -> { // Soundwave
+                val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
+                val out = bg.copyOf()
+                out[idx] = '●'
+                out.concatToString()
+            }
+            else -> { // Geometry
+                val bg = charArrayOf('▣','▣','▣','▢','▢','▢','▢','▢','▢','▢')
+                val out = bg.copyOf()
+                out[idx] = '◉'
+                out.concatToString()
+            }
+        }
     }
 
     // =========================
@@ -562,9 +649,9 @@ END
         val msgs = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         if (!cycleEnabled || msgs.isEmpty()) return
 
-        persistCycleEnabled()
+        persistCycleEnabledNow()
         persistCycleLines()
-        persistCycleInterval()
+        updateCycleInterval(cycleIntervalSeconds)
 
         cycleJob?.cancel()
         cycleJob = viewModelScope.launch {
@@ -651,8 +738,7 @@ END
         val combined = joinWithLimit(lines, 144)
         debugLastCombinedOsc = combined
 
-        val nothingActive =
-            afkLine.isBlank() && cycleLine.isBlank() && musicLines.isEmpty()
+        val nothingActive = afkLine.isBlank() && cycleLine.isBlank() && musicLines.isEmpty()
 
         if (forceClearIfAllOff && nothingActive) {
             clearChatbox(local)
@@ -663,10 +749,7 @@ END
 
         val nowMs = System.currentTimeMillis()
         val minMs = minSendIntervalSeconds.coerceAtLeast(2) * 1000L
-        if (nowMs - lastCombinedSendMs < minMs) {
-            return
-        }
-
+        if (nowMs - lastCombinedSendMs < minMs) return
         if (combined.isBlank()) return
 
         sendToVrchatRaw(combined, local, addToConversation = false)
