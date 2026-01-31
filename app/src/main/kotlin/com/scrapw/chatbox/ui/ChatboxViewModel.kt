@@ -153,7 +153,7 @@ class ChatboxViewModel(
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
-            triggerSfx = false
+            triggerSFX = false
         )
         osc.typing = false
 
@@ -536,7 +536,6 @@ END
         afkJob?.cancel()
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
-                // Update component and request a combined send
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
                 delay(afkForcedIntervalSeconds * 1000L)
             }
@@ -571,7 +570,11 @@ END
         cycleJob = viewModelScope.launch {
             cycleIndex = 0
             while (cycleEnabled) {
-                rebuildAndMaybeSendCombined(forceSend = true, local = local, cycleLineOverride = msgs[cycleIndex % msgs.size])
+                rebuildAndMaybeSendCombined(
+                    forceSend = true,
+                    local = local,
+                    cycleLineOverride = msgs[cycleIndex % msgs.size]
+                )
                 cycleIndex = (cycleIndex + 1) % msgs.size
                 delay(cycleIntervalSeconds.coerceAtLeast(2).toLong() * 1000L)
             }
@@ -661,7 +664,6 @@ END
         val nowMs = System.currentTimeMillis()
         val minMs = minSendIntervalSeconds.coerceAtLeast(2) * 1000L
         if (nowMs - lastCombinedSendMs < minMs) {
-            // Too soon; do nothing. Next tick from any module will send.
             return
         }
 
@@ -685,7 +687,6 @@ END
     // Now Playing block builder (with live position estimate)
     // =========================
     private fun buildNowPlayingLines(): List<String> {
-        // Demo mode if no real detection
         val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
         val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
 
@@ -702,7 +703,6 @@ END
             else -> safeTitle.take(maxLine - 1) + "…"
         }.trim()
 
-        // Live progress estimate
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 80_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 58_000L else nowPlayingPositionMs
 
@@ -785,7 +785,6 @@ END
             val line = clean[i]
             val add = if (out.isEmpty()) line.length else (1 + line.length)
             if (total + add > limit) {
-                // allow truncation on last line
                 val remain = limit - total - (if (out.isEmpty()) 0 else 1)
                 if (remain >= 2) {
                     out.add(line.take(remain - 1) + "…")
@@ -804,7 +803,7 @@ END
         osc.sendMessage(
             text,
             messengerUiState.value.isSendImmediately,
-            triggerSfx = false // force OFF (remove sound)
+            triggerSFX = false
         )
         lastSentToVrchatAtMs = System.currentTimeMillis()
 
