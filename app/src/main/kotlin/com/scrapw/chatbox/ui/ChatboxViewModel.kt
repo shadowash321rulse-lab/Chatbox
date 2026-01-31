@@ -148,11 +148,10 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // Force no SFX regardless of preference
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
-            triggerSFX = false
+            triggerSFX = false // hard disable sound
         )
         osc.typing = false
 
@@ -187,7 +186,7 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(isChecked) }
 
     // =========================
-    // Update checker (keep)
+    // Update checker
     // =========================
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
@@ -224,15 +223,15 @@ class ChatboxViewModel(
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
-    // Cycle lines list (max 10)
     val cycleLines = mutableStateListOf<String>()
 
     // =========================
-    // Now Playing (phone music)
+    // Now Playing
     // =========================
     var spotifyEnabled by mutableStateOf(false)
     var spotifyDemoEnabled by mutableStateOf(false)
     var spotifyPreset by mutableStateOf(1)
+
     var musicRefreshSeconds by mutableStateOf(2)
     private var nowPlayingJob: Job? = null
 
@@ -262,30 +261,9 @@ class ChatboxViewModel(
     var debugLastCombinedOsc by mutableStateOf("")
         private set
 
-    // Info doc
-    val fullInfoDocumentText: String = """
-VRC-A (VRChat Assistant)
-Made by: Ashoska Mitsu Sisko
-Base: ScrapW’s Chatbox base (heavily revamped)
-
-============================================================
-IMPORTANT: VRChat OSC MUST BE ON
-============================================================
-VRChat → Settings → OSC → Enable OSC.
-""".trimIndent()
-
-    // Music preset NAMES (HARD LOCKED)
-    private val musicPresetNames = listOf(
-        "Love",
-        "Minimal",
-        "Crystal",
-        "Soundwave",
-        "Geometry"
-    )
-
-    fun getMusicPresetName(preset: Int): String {
-        return musicPresetNames[preset.coerceIn(1, 5) - 1]
-    }
+    // Hard locked music preset names
+    private val musicPresetNames = listOf("Love", "Minimal", "Crystal", "Soundwave", "Geometry")
+    fun getMusicPresetName(preset: Int): String = musicPresetNames[preset.coerceIn(1, 5) - 1]
 
     fun renderMusicPresetPreview(preset: Int, fraction01: Float): String {
         val f = fraction01.coerceIn(0f, 1f)
@@ -294,7 +272,7 @@ VRChat → Settings → OSC → Enable OSC.
         return renderProgressBar(preset, pos, dur)
     }
 
-    // Preset caches loaded from DataStore flows
+    // Preset caches
     private val afkPresetTexts = arrayOf("", "", "")
     private val cyclePresetMessages = arrayOf("", "", "", "", "")
     private val cyclePresetIntervals = intArrayOf(3, 3, 3, 3, 3)
@@ -364,7 +342,7 @@ VRChat → Settings → OSC → Enable OSC.
         rebuildAndMaybeSendCombined(forceSend = false)
     }
 
-    // Cycle list handling (persist)
+    // Cycle list (persist)
     private fun setCycleLinesFromText(text: String) {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         cycleLines.clear()
@@ -414,8 +392,7 @@ VRChat → Settings → OSC → Enable OSC.
 
     fun getCyclePresetPreview(slot: Int): String {
         val i = slot.coerceIn(1, 5) - 1
-        val firstLine = cyclePresetMessages[i].lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-        return firstLine
+        return cyclePresetMessages[i].lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
     }
 
     // Preset load/save
@@ -462,32 +439,32 @@ VRChat → Settings → OSC → Enable OSC.
         persistCycleLines()
     }
 
-    fun notificationAccessIntent(): Intent {
-        return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
+    fun notificationAccessIntent(): Intent =
+        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     // Music flags
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
-        rebuildAndMaybeSendCombined(forceSend = true)
+        rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
         if (!enabled) stopNowPlayingSender(clearFromChatbox = true)
     }
 
     fun setSpotifyDemoFlag(enabled: Boolean) {
         spotifyDemoEnabled = enabled
-        rebuildAndMaybeSendCombined(forceSend = true)
+        rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
     }
 
     fun updateSpotifyPreset(preset: Int) {
         spotifyPreset = preset.coerceIn(1, 5)
-        rebuildAndMaybeSendCombined(forceSend = true)
+        rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
     }
 
-    // AFK sender
+    // =========================
+    // START/STOP (fixed so Stop actually disables, preventing auto-retoggle)
+    // =========================
+
     fun startAfkSender(local: Boolean = false) {
         if (!afkEnabled) return
-
         afkJob?.cancel()
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
@@ -498,18 +475,20 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     fun stopAfkSender(clearFromChatbox: Boolean) {
+        afkEnabled = false
         afkJob?.cancel()
         afkJob = null
         if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true, ignoreThrottle = true)
+        } else {
+            rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
         }
     }
 
     fun sendAfkNow(local: Boolean = false) {
-        rebuildAndMaybeSendCombined(forceSend = true, local = local)
+        rebuildAndMaybeSendCombined(forceSend = true, local = local, ignoreThrottle = true)
     }
 
-    // Cycle sender
     fun startCycle(local: Boolean = false) {
         val msgs = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         if (!cycleEnabled || msgs.isEmpty()) return
@@ -534,17 +513,21 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     fun stopCycle(clearFromChatbox: Boolean) {
+        cycleEnabled = false
+        persistCycleEnabled()
+
         cycleJob?.cancel()
         cycleJob = null
+
         if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true, ignoreThrottle = true)
+        } else {
+            rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
         }
     }
 
-    // Now Playing sender
     fun startNowPlayingSender(local: Boolean = false) {
         if (!spotifyEnabled) return
-
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
@@ -555,31 +538,48 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     fun stopNowPlayingSender(clearFromChatbox: Boolean) {
+        spotifyEnabled = false
+
         nowPlayingJob?.cancel()
         nowPlayingJob = null
+
         if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true, ignoreThrottle = true)
+        } else {
+            rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
         }
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
-        rebuildAndMaybeSendCombined(forceSend = true, local = local)
+        rebuildAndMaybeSendCombined(forceSend = true, local = local, ignoreThrottle = true)
     }
 
     fun stopAll(clearFromChatbox: Boolean) {
-        stopCycle(clearFromChatbox = false)
-        stopNowPlayingSender(clearFromChatbox = false)
-        stopAfkSender(clearFromChatbox = false)
+        afkEnabled = false
+        cycleEnabled = false
+        spotifyEnabled = false
+        persistCycleEnabled()
 
-        if (clearFromChatbox) clearChatbox()
+        cycleJob?.cancel(); cycleJob = null
+        nowPlayingJob?.cancel(); nowPlayingJob = null
+        afkJob?.cancel(); afkJob = null
+
+        if (clearFromChatbox) {
+            clearChatbox(ignoreThrottle = true)
+        } else {
+            rebuildAndMaybeSendCombined(forceSend = true, ignoreThrottle = true)
+        }
     }
 
-    // Combined builder + throttled sender
+    // =========================
+    // Combined builder + throttled sender (with stop-bypass)
+    // =========================
     private fun rebuildAndMaybeSendCombined(
         forceSend: Boolean,
         local: Boolean = false,
         cycleLineOverride: String? = null,
-        forceClearIfAllOff: Boolean = false
+        forceClearIfAllOff: Boolean = false,
+        ignoreThrottle: Boolean = false
     ) {
         val afkLine = if (afkEnabled && afkMessage.trim().isNotEmpty()) afkMessage.trim() else ""
         val cycleLine = if (cycleEnabled) (cycleLineOverride ?: currentCycleLinePreview()) else ""
@@ -599,23 +599,28 @@ VRChat → Settings → OSC → Enable OSC.
 
         val nothingActive = afkLine.isBlank() && cycleLine.isBlank() && musicLines.isEmpty()
         if (forceClearIfAllOff && nothingActive) {
-            clearChatbox(local)
+            clearChatbox(local = local, ignoreThrottle = true)
             return
         }
 
         if (!forceSend) return
 
-        val nowMs = System.currentTimeMillis()
-        val minMs = minSendIntervalSeconds.coerceAtLeast(2) * 1000L
-        if (nowMs - lastCombinedSendMs < minMs) return
+        if (!ignoreThrottle) {
+            val nowMs = System.currentTimeMillis()
+            val minMs = minSendIntervalSeconds.coerceAtLeast(2) * 1000L
+            if (nowMs - lastCombinedSendMs < minMs) return
+        }
+
         if (combined.isBlank()) return
 
         sendToVrchatRaw(combined, local, addToConversation = false)
-        lastCombinedSendMs = nowMs
+        lastCombinedSendMs = System.currentTimeMillis()
     }
 
-    private fun clearChatbox(local: Boolean = false) {
+    private fun clearChatbox(local: Boolean = false, ignoreThrottle: Boolean = false) {
+        // Always bypass throttle when clearing so it updates instantly
         sendToVrchatRaw("", local, addToConversation = false)
+        if (!ignoreThrottle) lastCombinedSendMs = System.currentTimeMillis()
     }
 
     private fun currentCycleLinePreview(): String {
@@ -624,7 +629,9 @@ VRChat → Settings → OSC → Enable OSC.
         return msgs.getOrNull(cycleIndex % msgs.size).orEmpty()
     }
 
+    // =========================
     // Now Playing builder
+    // =========================
     private fun buildNowPlayingLines(): List<String> {
         val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
         val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
@@ -659,6 +666,9 @@ VRChat → Settings → OSC → Enable OSC.
         return listOf(line1, line2).filter { it.isNotBlank() }
     }
 
+    // =========================
+    // Progress Bars (Geometry FIXED)
+    // =========================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
@@ -693,13 +703,16 @@ VRChat → Settings → OSC → Enable OSC.
                 out.concatToString()
             }
             else -> {
-                // Geometry fix: 3 filled blocks + 8 empty slots with moving dot only in empties
-                val prefix = charArrayOf('▣','▣','▣')
-                val emptySlots = 8
-                val idx = (p * (emptySlots - 1)).toInt()
-                val empties = CharArray(emptySlots) { '▢' }
-                empties[idx] = '◉'
-                (prefix + empties).concatToString()
+                // GEOMETRY (filled blocks grow with progress)
+                // Example: ▣▣▣▣◉▢▢▢▢▢   as it progresses
+                val slots = 10
+                val idx = (p * (slots - 1)).toInt()
+
+                val out = CharArray(slots) { '▢' }
+                for (i in 0 until idx) out[i] = '▣' // fill behind the dot
+                out[idx] = '◉' // position dot
+
+                out.concatToString()
             }
         }
     }
@@ -717,6 +730,7 @@ VRChat → Settings → OSC → Enable OSC.
 
         val out = ArrayList<String>()
         var total = 0
+
         for (line in clean) {
             val add = if (out.isEmpty()) line.length else (1 + line.length)
             if (total + add > limit) {
@@ -727,6 +741,7 @@ VRChat → Settings → OSC → Enable OSC.
             out.add(line)
             total += add
         }
+
         return out.joinToString("\n")
     }
 
