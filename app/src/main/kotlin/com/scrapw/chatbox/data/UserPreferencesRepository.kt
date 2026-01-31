@@ -28,20 +28,20 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // Cycle persistence (current)
+        // --- Cycle persistence ---
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // AFK persistence (CURRENT TEXT ONLY)
+        // --- AFK persistence (TEXT ONLY) ---
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // AFK presets (3)
+        // --- AFK presets (3 slots) ---
         val AFK_PRESET_1 = stringPreferencesKey("afk_preset_1")
         val AFK_PRESET_2 = stringPreferencesKey("afk_preset_2")
         val AFK_PRESET_3 = stringPreferencesKey("afk_preset_3")
 
-        // Cycle presets (5)
+        // --- Cycle presets (5 slots) ---
         val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
         val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
 
@@ -80,7 +80,7 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun saveIsSendImmediately(value: Boolean) = save(MSG_SEND_DIRECTLY, value)
 
     // ----------------------------
-    // Cycle (current)
+    // Cycle persistence
     // ----------------------------
     val cycleEnabled = get(CYCLE_ENABLED, false)
     suspend fun saveCycleEnabled(value: Boolean) = save(CYCLE_ENABLED, value)
@@ -92,68 +92,67 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
     // ----------------------------
-    // AFK (current text only)
+    // AFK persistence (TEXT ONLY)
     // ----------------------------
     val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
     suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
 
-    // AFK presets (3)
+    // ----------------------------
+    // AFK Presets (3)
+    // ----------------------------
     val afkPreset1 = get(AFK_PRESET_1, "")
     val afkPreset2 = get(AFK_PRESET_2, "")
     val afkPreset3 = get(AFK_PRESET_3, "")
 
-    suspend fun saveAfkPreset(slot: Int, text: String) {
-        dataStore.edit { prefs ->
-            when (slot) {
-                1 -> prefs[AFK_PRESET_1] = text
-                2 -> prefs[AFK_PRESET_2] = text
-                3 -> prefs[AFK_PRESET_3] = text
-            }
-        }
-    }
+    suspend fun saveAfkPreset1(text: String) = save(AFK_PRESET_1, text)
+    suspend fun saveAfkPreset2(text: String) = save(AFK_PRESET_2, text)
+    suspend fun saveAfkPreset3(text: String) = save(AFK_PRESET_3, text)
 
     // ----------------------------
-    // Cycle presets (5)
+    // Cycle Presets (5)
     // ----------------------------
     val cyclePreset1Messages = get(CYCLE_PRESET_1_MESSAGES, "")
     val cyclePreset1Interval = get(CYCLE_PRESET_1_INTERVAL, 3)
+    suspend fun saveCyclePreset1(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_1_MESSAGES] = messages
+            it[CYCLE_PRESET_1_INTERVAL] = intervalSeconds
+        }
+    }
 
     val cyclePreset2Messages = get(CYCLE_PRESET_2_MESSAGES, "")
     val cyclePreset2Interval = get(CYCLE_PRESET_2_INTERVAL, 3)
+    suspend fun saveCyclePreset2(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_2_MESSAGES] = messages
+            it[CYCLE_PRESET_2_INTERVAL] = intervalSeconds
+        }
+    }
 
     val cyclePreset3Messages = get(CYCLE_PRESET_3_MESSAGES, "")
     val cyclePreset3Interval = get(CYCLE_PRESET_3_INTERVAL, 3)
+    suspend fun saveCyclePreset3(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_3_MESSAGES] = messages
+            it[CYCLE_PRESET_3_INTERVAL] = intervalSeconds
+        }
+    }
 
     val cyclePreset4Messages = get(CYCLE_PRESET_4_MESSAGES, "")
     val cyclePreset4Interval = get(CYCLE_PRESET_4_INTERVAL, 3)
+    suspend fun saveCyclePreset4(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_4_MESSAGES] = messages
+            it[CYCLE_PRESET_4_INTERVAL] = intervalSeconds
+        }
+    }
 
     val cyclePreset5Messages = get(CYCLE_PRESET_5_MESSAGES, "")
     val cyclePreset5Interval = get(CYCLE_PRESET_5_INTERVAL, 3)
-
-    suspend fun saveCyclePreset(slot: Int, messages: String, intervalSeconds: Int) {
-        dataStore.edit { prefs ->
-            when (slot) {
-                1 -> {
-                    prefs[CYCLE_PRESET_1_MESSAGES] = messages
-                    prefs[CYCLE_PRESET_1_INTERVAL] = intervalSeconds
-                }
-                2 -> {
-                    prefs[CYCLE_PRESET_2_MESSAGES] = messages
-                    prefs[CYCLE_PRESET_2_INTERVAL] = intervalSeconds
-                }
-                3 -> {
-                    prefs[CYCLE_PRESET_3_MESSAGES] = messages
-                    prefs[CYCLE_PRESET_3_INTERVAL] = intervalSeconds
-                }
-                4 -> {
-                    prefs[CYCLE_PRESET_4_MESSAGES] = messages
-                    prefs[CYCLE_PRESET_4_INTERVAL] = intervalSeconds
-                }
-                5 -> {
-                    prefs[CYCLE_PRESET_5_MESSAGES] = messages
-                    prefs[CYCLE_PRESET_5_INTERVAL] = intervalSeconds
-                }
-            }
+    suspend fun saveCyclePreset5(messages: String, intervalSeconds: Int) {
+        dataStore.edit {
+            it[CYCLE_PRESET_5_MESSAGES] = messages
+            it[CYCLE_PRESET_5_INTERVAL] = intervalSeconds
         }
     }
 
