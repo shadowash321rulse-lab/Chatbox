@@ -1,85 +1,12 @@
+// Root build.gradle (DO NOT put android { } here)
+
 plugins {
-    id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
+    // Versions are REQUIRED here, but we do NOT apply them at root
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
 }
 
-android {
-    namespace 'com.scrapw.chatbox'
-    compileSdk 34
-
-    defaultConfig {
-        applicationId "com.scrapw.chatbox"
-        minSdk 26
-        targetSdk 34
-
-        // Reverted: no GitHub run-number auto versioning
-        versionCode 1
-        versionName "1.0"
-
-        vectorDrawables {
-            useSupportLibrary true
-        }
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-        debug {
-            minifyEnabled false
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = '17'
-    }
-
-    buildFeatures {
-        compose true
-    }
-
-    composeOptions {
-        // Works well with Kotlin 1.9.22
-        kotlinCompilerExtensionVersion '1.5.14'
-    }
-
-    packaging {
-        resources {
-            excludes += '/META-INF/{AL2.0,LGPL2.1}'
-        }
-    }
-}
-
-dependencies {
-    // --- Compose (BOM) ---
-    def composeBom = platform('androidx.compose:compose-bom:2024.06.00')
-    implementation composeBom
-    androidTestImplementation composeBom
-
-    implementation 'androidx.activity:activity-compose:1.9.0'
-    implementation 'androidx.compose.ui:ui'
-    implementation 'androidx.compose.ui:ui-tooling-preview'
-    debugImplementation 'androidx.compose.ui:ui-tooling'
-
-    implementation 'androidx.compose.material3:material3'
-    implementation 'androidx.compose.material:material-icons-extended'
-
-    // --- Lifecycle / ViewModel (Compose) ---
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4'
-
-    // --- Coroutines ---
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
-
-    // --- DataStore (Preferences) ---
-    implementation 'androidx.datastore:datastore-preferences:1.1.1'
-
-    // --- Optional: Navigation (only if you use it; safe to keep) ---
-    // implementation 'androidx.navigation:navigation-compose:2.7.7'
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
 }
