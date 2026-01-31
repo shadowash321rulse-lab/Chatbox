@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
@@ -29,20 +28,20 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // --- Cycle persistence ---
+        // Cycle persistence (current)
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // --- AFK persistence (TEXT ONLY) ---
+        // AFK persistence (CURRENT TEXT ONLY)
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // --- AFK PRESETS (3) ---
+        // AFK presets (3)
         val AFK_PRESET_1 = stringPreferencesKey("afk_preset_1")
         val AFK_PRESET_2 = stringPreferencesKey("afk_preset_2")
         val AFK_PRESET_3 = stringPreferencesKey("afk_preset_3")
 
-        // --- CYCLE PRESETS (5) ---
+        // Cycle presets (5)
         val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
         val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
 
@@ -81,7 +80,7 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun saveIsSendImmediately(value: Boolean) = save(MSG_SEND_DIRECTLY, value)
 
     // ----------------------------
-    // Cycle persistence
+    // Cycle (current)
     // ----------------------------
     val cycleEnabled = get(CYCLE_ENABLED, false)
     suspend fun saveCycleEnabled(value: Boolean) = save(CYCLE_ENABLED, value)
@@ -93,60 +92,68 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
     // ----------------------------
-    // AFK persistence (TEXT ONLY)
+    // AFK (current text only)
     // ----------------------------
     val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
     suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
 
-    // ----------------------------
     // AFK presets (3)
-    // ----------------------------
-    suspend fun saveAfkPreset(slot: Int, text: String) {
-        val key = when (slot.coerceIn(1, 3)) {
-            1 -> AFK_PRESET_1
-            2 -> AFK_PRESET_2
-            else -> AFK_PRESET_3
-        }
-        save(key, text)
-    }
+    val afkPreset1 = get(AFK_PRESET_1, "")
+    val afkPreset2 = get(AFK_PRESET_2, "")
+    val afkPreset3 = get(AFK_PRESET_3, "")
 
-    suspend fun getAfkPresetOnce(slot: Int): String {
-        val key = when (slot.coerceIn(1, 3)) {
-            1 -> AFK_PRESET_1
-            2 -> AFK_PRESET_2
-            else -> AFK_PRESET_3
+    suspend fun saveAfkPreset(slot: Int, text: String) {
+        dataStore.edit { prefs ->
+            when (slot) {
+                1 -> prefs[AFK_PRESET_1] = text
+                2 -> prefs[AFK_PRESET_2] = text
+                3 -> prefs[AFK_PRESET_3] = text
+            }
         }
-        return get(key, "").first()
     }
 
     // ----------------------------
     // Cycle presets (5)
     // ----------------------------
+    val cyclePreset1Messages = get(CYCLE_PRESET_1_MESSAGES, "")
+    val cyclePreset1Interval = get(CYCLE_PRESET_1_INTERVAL, 3)
+
+    val cyclePreset2Messages = get(CYCLE_PRESET_2_MESSAGES, "")
+    val cyclePreset2Interval = get(CYCLE_PRESET_2_INTERVAL, 3)
+
+    val cyclePreset3Messages = get(CYCLE_PRESET_3_MESSAGES, "")
+    val cyclePreset3Interval = get(CYCLE_PRESET_3_INTERVAL, 3)
+
+    val cyclePreset4Messages = get(CYCLE_PRESET_4_MESSAGES, "")
+    val cyclePreset4Interval = get(CYCLE_PRESET_4_INTERVAL, 3)
+
+    val cyclePreset5Messages = get(CYCLE_PRESET_5_MESSAGES, "")
+    val cyclePreset5Interval = get(CYCLE_PRESET_5_INTERVAL, 3)
+
     suspend fun saveCyclePreset(slot: Int, messages: String, intervalSeconds: Int) {
-        val s = slot.coerceIn(1, 5)
-        val interval = intervalSeconds.coerceAtLeast(2)
-
         dataStore.edit { prefs ->
-            when (s) {
-                1 -> { prefs[CYCLE_PRESET_1_MESSAGES] = messages; prefs[CYCLE_PRESET_1_INTERVAL] = interval }
-                2 -> { prefs[CYCLE_PRESET_2_MESSAGES] = messages; prefs[CYCLE_PRESET_2_INTERVAL] = interval }
-                3 -> { prefs[CYCLE_PRESET_3_MESSAGES] = messages; prefs[CYCLE_PRESET_3_INTERVAL] = interval }
-                4 -> { prefs[CYCLE_PRESET_4_MESSAGES] = messages; prefs[CYCLE_PRESET_4_INTERVAL] = interval }
-                5 -> { prefs[CYCLE_PRESET_5_MESSAGES] = messages; prefs[CYCLE_PRESET_5_INTERVAL] = interval }
+            when (slot) {
+                1 -> {
+                    prefs[CYCLE_PRESET_1_MESSAGES] = messages
+                    prefs[CYCLE_PRESET_1_INTERVAL] = intervalSeconds
+                }
+                2 -> {
+                    prefs[CYCLE_PRESET_2_MESSAGES] = messages
+                    prefs[CYCLE_PRESET_2_INTERVAL] = intervalSeconds
+                }
+                3 -> {
+                    prefs[CYCLE_PRESET_3_MESSAGES] = messages
+                    prefs[CYCLE_PRESET_3_INTERVAL] = intervalSeconds
+                }
+                4 -> {
+                    prefs[CYCLE_PRESET_4_MESSAGES] = messages
+                    prefs[CYCLE_PRESET_4_INTERVAL] = intervalSeconds
+                }
+                5 -> {
+                    prefs[CYCLE_PRESET_5_MESSAGES] = messages
+                    prefs[CYCLE_PRESET_5_INTERVAL] = intervalSeconds
+                }
             }
-        }
-    }
-
-    suspend fun getCyclePresetOnce(slot: Int): Pair<String, Int> {
-        val s = slot.coerceIn(1, 5)
-        val data = dataStore.data.first()
-
-        return when (s) {
-            1 -> (data[CYCLE_PRESET_1_MESSAGES] ?: "") to (data[CYCLE_PRESET_1_INTERVAL] ?: 3)
-            2 -> (data[CYCLE_PRESET_2_MESSAGES] ?: "") to (data[CYCLE_PRESET_2_INTERVAL] ?: 3)
-            3 -> (data[CYCLE_PRESET_3_MESSAGES] ?: "") to (data[CYCLE_PRESET_3_INTERVAL] ?: 3)
-            4 -> (data[CYCLE_PRESET_4_MESSAGES] ?: "") to (data[CYCLE_PRESET_4_INTERVAL] ?: 3)
-            else -> (data[CYCLE_PRESET_5_MESSAGES] ?: "") to (data[CYCLE_PRESET_5_INTERVAL] ?: 3)
         }
     }
 
