@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
@@ -32,7 +33,7 @@ private enum class AppPage(val title: String) {
     Cycle("Cycle"),
     NowPlaying("Now Playing"),
     Debug("Debug"),
-    Settings("Settings")
+    Settings("Info")
 }
 
 private enum class InfoTab(val title: String) {
@@ -104,7 +105,7 @@ private fun SlimBottomBar(
             BottomTab(AppPage.Cycle, current, Icons.Filled.Sync, onSelect)
             BottomTab(AppPage.NowPlaying, current, Icons.Filled.MusicNote, onSelect)
             BottomTab(AppPage.Debug, current, Icons.Filled.BugReport, onSelect)
-            BottomTab(AppPage.Settings, current, Icons.Filled.Settings, onSelect)
+            BottomTab(AppPage.Settings, current, Icons.Filled.Info, onSelect)
         }
     }
 }
@@ -181,8 +182,8 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
     PageContainer {
         SectionCard(
-            title = "Connection",
-            subtitle = "Enter your headset/phone IP then tap Apply."
+            title = "Connection (OSC Target)",
+            subtitle = "This is where your messages are sent. Use the IP of the headset/device running VRChat."
         ) {
             OutlinedTextField(
                 value = ipInput,
@@ -207,11 +208,15 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             }
 
             Text("Current target: ${uiState.ipAddress}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Important: Your headset and phone MUST be on the same Wi-Fi.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         SectionCard(
             title = "Manual Send",
-            subtitle = "One-off message (doesn’t affect Cycle/Now Playing/AFK)."
+            subtitle = "This sends one message instantly. It does not change AFK/Cycle/Now Playing."
         ) {
             OutlinedTextField(
                 value = vm.messageText.value,
@@ -223,62 +228,59 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             Button(onClick = { vm.sendMessage() }, modifier = Modifier.fillMaxWidth()) {
                 Text("Send")
             }
-        }
-    }
-}
 
-@Composable
-private fun PresetRow(
-    title: String,
-    slotCount: Int,
-    preview: (Int) -> String,
-    onLoad: (Int) -> Unit,
-    onSave: (Int) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.labelLarge)
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            for (slot in 1..slotCount) {
-                ElevatedCard(
-                    modifier = Modifier.widthIn(min = 220.dp)
-                ) {
-                    Column(
-                        Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text("Slot $slot", style = MaterialTheme.typography.labelMedium)
-                        Text(
-                            preview(slot),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace
-                        )
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { onLoad(slot) }) { Text("Load") }
-                            Button(onClick = { onSave(slot) }) { Text("Save") }
-                        }
-                    }
-                }
-            }
+            Text(
+                "Tip: VRC-A disables the VRChat “send sound” by default.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
 
 @Composable
 private fun CyclePage(vm: ChatboxViewModel) {
+    // UI list editing (no Enter needed)
+    var newCycleLine by rememberSaveable { mutableStateOf("") }
+    val cycleLinesState = rememberSaveable { mutableStateOf(listOf<String>()) }
+
+    LaunchedEffect(vm.cycleMessages) {
+        val parsed = vm.cycleMessages
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        if (parsed != cycleLinesState.value) {
+            cycleLinesState.value = parsed
+        }
+    }
+
+    fun pushCycleLinesToVm(lines: List<String>) {
+        cycleLinesState.value = lines
+        vm.updateCycleMessages(lines.joinToString("\n"))
+    }
+
     PageContainer {
         SectionCard(
-            title = "AFK (top line)",
-            subtitle = "AFK sits above Cycle + Now Playing. Interval is forced. Use presets to save text."
+            title = "How your chatbox is built",
+            subtitle = null
+        ) {
+            Text("VRC-A sends one combined message with up to 3 parts:", style = MaterialTheme.typography.bodyMedium)
+            Text("1) AFK (top)  2) Cycle (middle)  3) Now Playing (bottom)", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "These parts DO NOT override each other anymore. VRC-A merges them and sends at a safe speed (min 2s).",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        SectionCard(
+            title = "AFK (Top line)",
+            subtitle = "AFK sits above everything. The AFK interval is forced to avoid spam."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("AFK enabled")
+                Column(Modifier.weight(1f)) {
+                    Text("AFK enabled")
+                    Text("Enable AFK, then press Start AFK to begin sending.", style = MaterialTheme.typography.bodySmall)
+                }
                 Switch(
                     checked = vm.afkEnabled,
                     onCheckedChange = { vm.afkEnabled = it }
@@ -290,16 +292,32 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 onValueChange = { vm.updateAfkMessage(it) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("AFK text") }
+                label = { Text("AFK text") },
+                placeholder = { Text("Example: AFK — grabbing water") }
             )
 
-            PresetRow(
-                title = "AFK presets",
-                slotCount = 3,
-                preview = { slot -> vm.getAfkPresetPreview(slot) },
-                onLoad = { slot -> vm.loadAfkPreset(slot) },
-                onSave = { slot -> vm.saveAfkPreset(slot, vm.afkMessage) }
-            )
+            Text("AFK Presets (saved even if app closes):", style = MaterialTheme.typography.labelLarge)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                (1..3).forEach { slot ->
+                    ElevatedCard {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Slot $slot", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                vm.getAfkPresetPreview(slot),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { vm.loadAfkPreset(slot) }) { Text("Load") }
+                                Button(onClick = { vm.saveAfkPreset(slot, vm.afkMessage) }) { Text("Save") }
+                            }
+                        }
+                    }
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -313,20 +331,17 @@ private fun CyclePage(vm: ChatboxViewModel) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Stop AFK") }
             }
-
-            OutlinedButton(
-                onClick = { vm.sendAfkNow() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = vm.afkEnabled
-            ) { Text("Send AFK once") }
         }
 
         SectionCard(
-            title = "Cycle Messages",
-            subtitle = "Cycle is the middle line. Now Playing stays underneath automatically."
+            title = "Cycle (Middle line)",
+            subtitle = "Add messages below. You do NOT need to press Enter anymore."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Cycle enabled")
+                Column(Modifier.weight(1f)) {
+                    Text("Cycle enabled")
+                    Text("When running, Cycle rotates one message at a time.", style = MaterialTheme.typography.bodySmall)
+                }
                 Switch(
                     checked = vm.cycleEnabled,
                     onCheckedChange = { vm.setCycleEnabledFlag(it) }
@@ -334,20 +349,57 @@ private fun CyclePage(vm: ChatboxViewModel) {
             }
 
             OutlinedTextField(
-                value = vm.cycleMessages,
-                onValueChange = { vm.updateCycleMessages(it) },
+                value = newCycleLine,
+                onValueChange = { newCycleLine = it },
                 modifier = Modifier.fillMaxWidth(),
-                minLines = 4,
-                label = { Text("Lines (one per line)") }
+                singleLine = true,
+                label = { Text("Add a cycle message") },
+                placeholder = { Text("Example: Streaming • Song requests open") }
             )
 
-            PresetRow(
-                title = "Cycle presets",
-                slotCount = 5,
-                preview = { slot -> vm.getCyclePresetPreview(slot) },
-                onLoad = { slot -> vm.loadCyclePreset(slot) },
-                onSave = { slot -> vm.saveCyclePreset(slot, vm.cycleMessages) }
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = {
+                        val t = newCycleLine.trim()
+                        if (t.isNotEmpty()) {
+                            pushCycleLinesToVm(cycleLinesState.value + t)
+                            newCycleLine = ""
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    enabled = newCycleLine.trim().isNotEmpty()
+                ) { Text("Add") }
+
+                OutlinedButton(
+                    onClick = { pushCycleLinesToVm(emptyList()) },
+                    modifier = Modifier.weight(1f),
+                    enabled = cycleLinesState.value.isNotEmpty()
+                ) { Text("Clear") }
+            }
+
+            if (cycleLinesState.value.isEmpty()) {
+                Text("No cycle messages yet. Add one above.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                ElevatedCard {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Current cycle list:", style = MaterialTheme.typography.labelLarge)
+                        cycleLinesState.value.forEachIndexed { idx, line ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("${idx + 1}. $line", modifier = Modifier.weight(1f))
+                                IconButton(onClick = {
+                                    val next = cycleLinesState.value.toMutableList().also { it.removeAt(idx) }
+                                    pushCycleLinesToVm(next)
+                                }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Remove")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
@@ -356,14 +408,50 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Cycle speed (seconds) (min 2)") },
+                label = { Text("Cycle speed (seconds) — minimum 2") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { vm.startCycle() }, modifier = Modifier.weight(1f)) { Text("Start") }
-                OutlinedButton(onClick = { vm.stopCycle() }, modifier = Modifier.weight(1f)) { Text("Stop") }
+            Text("Cycle Presets (saved even if app closes):", style = MaterialTheme.typography.labelLarge)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                (1..5).forEach { slot ->
+                    ElevatedCard {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Slot $slot", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                vm.getCyclePresetPreview(slot),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { vm.loadCyclePreset(slot) }) { Text("Load") }
+                                Button(onClick = { vm.saveCyclePreset(slot, vm.cycleMessages) }) { Text("Save") }
+                            }
+                        }
+                    }
+                }
             }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.startCycle() },
+                    modifier = Modifier.weight(1f),
+                    enabled = vm.cycleEnabled && cycleLinesState.value.isNotEmpty()
+                ) { Text("Start") }
+
+                OutlinedButton(
+                    onClick = { vm.stopCycle() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Stop") }
+            }
+
+            Text(
+                "If VRChat randomly cuts out: increase delays and keep everything at 2 seconds or higher.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
@@ -374,11 +462,14 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 
     PageContainer {
         SectionCard(
-            title = "Now Playing (phone music)",
-            subtitle = "Uses Notification Access. Works with Spotify/YouTube Music/etc."
+            title = "Now Playing (Bottom block)",
+            subtitle = "Reads your phone’s media notification. Shows under AFK + Cycle."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Enable Now Playing block")
+                Column(Modifier.weight(1f)) {
+                    Text("Enable Now Playing")
+                    Text("Then press Start to begin sending.", style = MaterialTheme.typography.bodySmall)
+                }
                 Switch(
                     checked = vm.spotifyEnabled,
                     onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
@@ -386,7 +477,10 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Demo mode (testing)")
+                Column(Modifier.weight(1f)) {
+                    Text("Demo mode")
+                    Text("Shows a fake song if nothing is detected.", style = MaterialTheme.typography.bodySmall)
+                }
                 Switch(
                     checked = vm.spotifyDemoEnabled,
                     onCheckedChange = { vm.setSpotifyDemoFlag(it) }
@@ -405,12 +499,15 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Music refresh speed (seconds) (min 2)") },
+                label = { Text("Music refresh speed (seconds) — minimum 2") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
             Text("Progress bar presets:", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 (1..5).forEach { p ->
                     val selected = vm.spotifyPreset == p
                     val colors =
@@ -421,7 +518,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                         onClick = { vm.updateSpotifyPreset(p) },
                         colors = colors,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) { Text("$p") }
+                    ) { Text("Preset $p") }
                 }
             }
 
@@ -434,11 +531,16 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 onClick = { vm.sendNowPlayingOnce() },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Send once now (test)") }
+
+            Text(
+                "Note: VRC-A forces NO send sound effect by default.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         SectionCard(
             title = "Detected / Preview",
-            subtitle = "If blank: enable access, restart app, then play music."
+            subtitle = "If blank: enable Notification Access, restart app, then play music."
         ) {
             Text("Detected: ${vm.nowPlayingDetected}")
             Text("Artist: ${vm.lastNowPlayingArtist}")
@@ -453,8 +555,8 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 private fun DebugPage(vm: ChatboxViewModel) {
     PageContainer {
         SectionCard(
-            title = "Listener",
-            subtitle = "Confirms Notification Access + media detection."
+            title = "Listener Status",
+            subtitle = "This confirms whether the phone is allowing VRC-A to read media notifications."
         ) {
             Text("Listener connected: ${vm.listenerConnected}")
             Text("Active package: ${vm.activePackage}")
@@ -463,8 +565,8 @@ private fun DebugPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "OSC Output Preview",
-            subtitle = "Shows what each module is generating, plus the combined message."
+            title = "What VRC-A is trying to send",
+            subtitle = "If something isn’t working, this shows which part is blank."
         ) {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -483,8 +585,12 @@ private fun DebugPage(vm: ChatboxViewModel) {
             }
         }
 
-        SectionCard(title = "VRChat send status") {
+        SectionCard(
+            title = "Last send time",
+            subtitle = "Useful if VRChat seems to be rate-limiting."
+        ) {
             Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
+            Text("Minimum cooldown is forced to 2 seconds to reduce cutouts.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -493,72 +599,164 @@ private fun DebugPage(vm: ChatboxViewModel) {
 private fun SettingsPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
-    val overview = remember {
+    val fullDoc = remember {
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
 Base: ScrapW’s Chatbox base (heavily revamped)
 
-VRC-A sends text to VRChat’s Chatbox using OSC over your Wi-Fi network.
-It’s designed for standalone / mobile-friendly setups, with debug indicators
-so you can quickly tell what’s failing (connection, permissions, detection).
+============================================================
+WHAT THIS APP IS
+============================================================
+VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
+It’s meant for standalone / mobile-friendly setups where you want:
+- A quick “Send message” tool
+- A cycling status / rotating messages system
+- A live “Now Playing” music block (from your phone’s media notifications)
+- An AFK tag at the very top
+
+VRC-A is designed to be “easy to test” with debug indicators so you can tell
+what’s failing (connection, permissions, detection, etc).
+
+IMPORTANT DEFAULTS (NEW)
+- VRC-A disables the VRChat “send sound effect” by default.
+- All modules are merged into one combined message so they do not cancel each other out.
+- All speeds are clamped so they cannot go below 2 seconds (helps VRChat cutouts).
+- When you stop AFK / Cycle / Music, VRC-A clears that block immediately.
+
+============================================================
+WHAT VRC-A IS FOR
+============================================================
+Use VRC-A if you want your VRChat Chatbox to show:
+- A rotating status message (Cycle)
+- What you’re listening to on your phone (Now Playing)
+- An AFK label on top
+
+============================================================
+FEATURES
+============================================================
+A) Manual Send
+- Send a message instantly from Dashboard.
+
+B) AFK (Top line)
+- Toggle AFK on/off
+- Start/Stop AFK sender
+- AFK text is saved even if the app closes
+- 3 AFK presets saved to slots 1–3
+
+C) Cycle (Middle line)
+- Add messages using an “Add” button (no Enter needed)
+- Remove messages from the list
+- Start/Stop Cycle sender
+- 5 Cycle presets saved to slots 1–5
+
+D) Now Playing (Bottom block)
+- Reads media notifications via Notification Access
+- Works with players that show a media notification
+- Shows a progress bar preset (including fixed Geometry fill)
+
+E) Debug
+- Shows what AFK/Cycle/Music is generating
+- Shows the combined message
+
+============================================================
+TUTORIAL (DUMBED DOWN)
+============================================================
+STEP 1: Same Wi-Fi
+Phone and headset must be on the same Wi-Fi.
+
+STEP 2: Find headset IP
+Headset Settings → Wi-Fi → your network → IP Address.
+
+STEP 3: Put IP into VRC-A
+Dashboard → enter IP → Apply.
+
+STEP 4: Test Manual Send
+Type “hello” → Send → VRChat should show it.
+
+STEP 5: Enable Now Playing
+Now Playing tab → Open Notification Access settings → enable VRC-A.
+Restart the app, play music, then check “Detected”.
+
+============================================================
+KNOWN ISSUES
+============================================================
+- Some music apps only update progress when you interact (pause/seek/next).
+- Some routers isolate devices (client isolation) which breaks OSC.
+============================================================
+END
+============================================================
+        """.trimIndent()
+    }
+
+    val overview = remember {
+        """
+VRC-A (VRChat Assistant)
+Made by: Ashoska Mitsu Sisko
+Based on ScrapW’s Chatbox base (heavily revamped)
+
+VRC-A sends text to VRChat’s Chatbox using OSC over your Wi-Fi.
+
+Defaults:
+- No send sound effect
+- Minimum 2s update speed
+- AFK/Cycle/Music merged so nothing cancels out
+- Stopping a module clears it immediately
         """.trimIndent()
     }
 
     val features = remember {
         """
-FEATURES
-- Manual sending
-- Cycle messages (5 presets)
-- Now Playing block (phone notifications)
-- 5 progress bar presets
-- AFK tag at top (3 presets)
-- Debug indicators (including OSC preview)
-- Send coordinator (prevents modules cancelling each other)
-- Min 2s cooldown (helps avoid VRChat chatbox cutouts)
-- Stop clears lines immediately (sends blank space)
+FEATURES (quick list)
+- Manual Send
+- AFK (top) + 3 saved presets
+- Cycle (middle) + Add button system + 5 saved presets
+- Now Playing (bottom) + progress presets
+- Debug shows what each module is generating
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-TUTORIAL (simple)
-1) Put phone + headset on same Wi-Fi
+TUTORIAL (short)
+1) Same Wi-Fi (headset + phone)
 2) Find headset IP (Wi-Fi details)
-3) Dashboard -> enter IP -> Apply
-4) Manual Send test ("hello")
-5) Now Playing -> enable Notification Access
-6) Start Now Playing
-7) Cycle -> Start
-8) AFK -> Start
+3) Dashboard → IP → Apply
+4) Manual Send test
+5) Now Playing → enable Notification Access
+6) Start Now Playing, Start Cycle, Start AFK
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-KNOWN BUGS / NOTES
-- Some music players update progress only when you interact (pause/seek/skip).
-  VRC-A tries to estimate progress while playing using elapsed time.
-- Wrong IP / different Wi-Fi = nothing sends.
-- Some routers block device-to-device traffic (client isolation).
+COMMON PROBLEMS
+- Nothing appears: wrong IP or not same Wi-Fi
+- Now Playing blank: Notification Access not enabled / app not restarted
+- Progress not moving: depends on music player updates
+- VRChat cutouts: keep speeds 2 seconds or higher
         """.trimIndent()
     }
 
     val help = remember {
         """
-HELP
-- Nothing in VRChat: check IP + OSC enabled + same Wi-Fi
-- Now Playing blank: enable Notification Access + restart app
-- Progress not moving: depends on music player
+QUICK HELP
+If nothing sends:
+- Recheck headset IP
+- Same Wi-Fi
+- VRChat OSC enabled
+
+If Now Playing blank:
+- Enable Notification Access
+- Restart VRC-A
+- Try a different music app to test
         """.trimIndent()
     }
-
-    val fullDoc = remember { "Full document can be pasted here later if you want it embedded." }
 
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
+            subtitle = "Everything you need to use VRC-A (what it is, setup, and troubleshooting)."
         ) {
             Row(
                 modifier = Modifier
@@ -598,7 +796,7 @@ HELP
             }
         }
 
-        SectionCard(title = "About (short)") {
+        SectionCard(title = "About") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Info, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
