@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -17,17 +19,40 @@ android {
         versionCode = runNumber
         versionName = "1.0.$runNumber"
 
-        vectorDrawables {
-            useSupportLibrary = true
+        vectorDrawables { useSupportLibrary = true }
+    }
+
+    // ✅ Release signing from repo files (NO GitHub Secrets required)
+    // Folder layout expected:
+    //  - keystore/release.keystore
+    //  - keystore/keystore.properties
+    signingConfigs {
+        create("release") {
+            val propsFile = rootProject.file("keystore/keystore.properties")
+            val store = rootProject.file("keystore/release.keystore")
+
+            if (propsFile.exists() && store.exists()) {
+                val props = Properties()
+                propsFile.inputStream().use { props.load(it) }
+
+                storeFile = store
+                storePassword = props.getProperty("storePassword") ?: ""
+                keyAlias = props.getProperty("keyAlias") ?: ""
+                keyPassword = props.getProperty("keyPassword") ?: ""
+
+                enableV1Signing = true
+                enableV2Signing = true
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // ✅ IMPORTANT: to update over old installs, signing must be consistent
-            // If you already have signing configured elsewhere, keep it there.
-            // Otherwise set signingConfig once you add a keystore (see note below).
+
+            // ✅ IMPORTANT: consistent signing enables updating over old installs
+            signingConfig = signingConfigs.getByName("release")
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -43,23 +68,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures {
-        compose = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
+    buildFeatures { compose = true }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
+
     packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
+        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     }
 }
 
 dependencies {
-    // keep your existing deps here (don’t delete them)
+    // ✅ Paste your real existing dependencies here.
+    // Do NOT leave this empty.
 }
