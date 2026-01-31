@@ -85,8 +85,8 @@ class ChatboxViewModel(
 
     private val userInputIpState = kotlinx.coroutines.flow.MutableStateFlow("")
 
-    private val ipFlow = combine(storedIpState, userInputIpState) { a, b ->
-        if (b.isNotBlank()) b else a
+    private val ipFlow = combine(storedIpState, userInputIpState) { stored, typed ->
+        if (typed.isNotBlank()) typed else stored
     }
 
     val messengerUiState: StateFlow<MessengerUiState> = combine(
@@ -133,7 +133,6 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.savePort(port) }
     }
 
-    // overlay expects (TextFieldValue, Boolean)
     fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         messageText.value = message
@@ -148,7 +147,7 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // Force no SFX regardless of preference
+        // hard-disable SFX (you requested removal)
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
@@ -187,7 +186,7 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(isChecked) }
 
     // =========================
-    // Update checker (keep)
+    // Update checker
     // =========================
     private var updateChecked = false
     var updateInfo by mutableStateOf(UpdateInfo(UpdateStatus.NOT_CHECKED))
@@ -204,6 +203,7 @@ class ChatboxViewModel(
     // =========================
     var minSendIntervalSeconds by mutableStateOf(2)
         private set
+
     private var lastCombinedSendMs = 0L
 
     // =========================
@@ -224,11 +224,11 @@ class ChatboxViewModel(
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
-    // Cycle lines list (max 10)
+    // max 10 lines, edited directly by UI (no “press enter” system)
     val cycleLines = mutableStateListOf<String>()
 
     // =========================
-    // Now Playing (phone music)
+    // Now Playing
     // =========================
     var spotifyEnabled by mutableStateOf(false)
     var spotifyDemoEnabled by mutableStateOf(false)
@@ -236,7 +236,9 @@ class ChatboxViewModel(
     var musicRefreshSeconds by mutableStateOf(2)
     private var nowPlayingJob: Job? = null
 
-    // Debug fields
+    // =========================
+    // Debug fields shown in UI
+    // =========================
     var listenerConnected by mutableStateOf(false)
     var activePackage by mutableStateOf("(none)")
     var nowPlayingDetected by mutableStateOf(false)
@@ -247,12 +249,15 @@ class ChatboxViewModel(
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
 
+    // Raw now playing snapshot parts
     private var nowPlayingDurationMs: Long = 0L
     private var nowPlayingPositionMs: Long = 0L
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
 
-    // OSC preview
+    // =========================
+    // Debug OSC preview strings
+    // =========================
     var debugLastAfkOsc by mutableStateOf("")
         private set
     var debugLastCycleOsc by mutableStateOf("")
@@ -262,42 +267,12 @@ class ChatboxViewModel(
     var debugLastCombinedOsc by mutableStateOf("")
         private set
 
-    // Info doc
-    val fullInfoDocumentText: String = """
-VRC-A (VRChat Assistant)
-Made by: Ashoska Mitsu Sisko
-Base: ScrapW’s Chatbox base (heavily revamped)
-
-============================================================
-IMPORTANT: VRChat OSC MUST BE ON
-============================================================
-VRChat → Settings → OSC → Enable OSC.
-""".trimIndent()
-
-    // Music preset NAMES (HARD LOCKED)
-    private val musicPresetNames = listOf(
-        "Love",
-        "Minimal",
-        "Crystal",
-        "Soundwave",
-        "Geometry"
-    )
-
-    fun getMusicPresetName(preset: Int): String {
-        return musicPresetNames[preset.coerceIn(1, 5) - 1]
-    }
-
-    fun renderMusicPresetPreview(preset: Int, fraction01: Float): String {
-        val f = fraction01.coerceIn(0f, 1f)
-        val dur = 100_000L
-        val pos = (dur * f).toLong()
-        return renderProgressBar(preset, pos, dur)
-    }
-
-    // Preset caches loaded from DataStore flows
-    private val afkPresetTexts = arrayOf("", "", "")
-    private val cyclePresetMessages = arrayOf("", "", "", "", "")
-    private val cyclePresetIntervals = intArrayOf(3, 3, 3, 3, 3)
+    // =========================
+    // ✅ FIX #1: Preset previews must be Compose state
+    // =========================
+    private val afkPresetTexts = mutableStateListOf("", "", "")
+    private val cyclePresetMessages = mutableStateListOf("", "", "", "", "")
+    private val cyclePresetIntervals = mutableStateListOf(3, 3, 3, 3, 3)
 
     init {
         // AFK main text
@@ -305,7 +280,7 @@ VRChat → Settings → OSC → Enable OSC.
             userPreferencesRepository.afkMessage.collect { afkMessage = it }
         }
 
-        // Cycle persisted
+        // Cycle persisted enabled/messages/interval
         viewModelScope.launch {
             userPreferencesRepository.cycleEnabled.collect { cycleEnabled = it }
         }
@@ -315,15 +290,17 @@ VRChat → Settings → OSC → Enable OSC.
             }
         }
         viewModelScope.launch {
-            userPreferencesRepository.cycleInterval.collect { cycleIntervalSeconds = it.coerceAtLeast(2) }
+            userPreferencesRepository.cycleInterval.collect {
+                cycleIntervalSeconds = it.coerceAtLeast(2)
+            }
         }
 
-        // AFK preset slots
+        // ✅ AFK presets (3) into STATE list (recomposes immediately)
         viewModelScope.launch { userPreferencesRepository.afkPreset1.collect { afkPresetTexts[0] = it } }
         viewModelScope.launch { userPreferencesRepository.afkPreset2.collect { afkPresetTexts[1] = it } }
         viewModelScope.launch { userPreferencesRepository.afkPreset3.collect { afkPresetTexts[2] = it } }
 
-        // Cycle preset slots 1..5
+        // ✅ Cycle presets (5) into STATE list (recomposes immediately)
         viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetMessages[0] = it } }
         viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervals[0] = it.coerceAtLeast(2) } }
 
@@ -339,7 +316,7 @@ VRChat → Settings → OSC → Enable OSC.
         viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetMessages[4] = it } }
         viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervals[4] = it.coerceAtLeast(2) } }
 
-        // NowPlaying
+        // NowPlayingState → fields
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -357,14 +334,18 @@ VRChat → Settings → OSC → Enable OSC.
         }
     }
 
-    // AFK text update (persist)
+    // =========================
+    // AFK text update (persists)
+    // =========================
     fun updateAfkText(text: String) {
         afkMessage = text
         viewModelScope.launch { userPreferencesRepository.saveAfkMessage(text) }
         rebuildAndMaybeSendCombined(forceSend = false)
     }
 
-    // Cycle list handling (persist)
+    // =========================
+    // Cycle lines management (persist as joined string)
+    // =========================
     private fun setCycleLinesFromText(text: String) {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         cycleLines.clear()
@@ -404,9 +385,13 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     private fun persistCycleEnabled() = viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
-    private fun persistCycleInterval() = viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2)) }
+    private fun persistCycleInterval() = viewModelScope.launch {
+        userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2))
+    }
 
+    // =========================
     // Preset previews
+    // =========================
     fun getAfkPresetPreview(slot: Int): String {
         val i = slot.coerceIn(1, 3) - 1
         return afkPresetTexts[i].trim()
@@ -418,9 +403,39 @@ VRChat → Settings → OSC → Enable OSC.
         return firstLine
     }
 
-    // Preset load/save
+    // =========================
+    // Hard locked music preset names
+    // =========================
+    fun getMusicPresetName(preset: Int): String {
+        return when (preset.coerceIn(1, 5)) {
+            1 -> "Love"
+            2 -> "Minimal"
+            3 -> "Crystal"
+            4 -> "Soundwave"
+            else -> "Geometry"
+        }
+    }
+
+    /**
+     * UI-only animated preview (0f..1f). This does NOT affect sending.
+     */
+    fun renderMusicPresetPreview(preset: Int, t: Float): String {
+        val p = t.coerceIn(0f, 1f)
+        val pos = (p * 1000f).toLong()
+        return renderProgressBar(preset, pos, 1000L)
+    }
+
+    // =========================
+    // Preset load/save (NO “type after pressing” bug)
+    // =========================
     suspend fun saveAfkPreset(slot: Int, text: String) {
-        when (slot.coerceIn(1, 3)) {
+        val s = slot.coerceIn(1, 3)
+        val idx = s - 1
+
+        // ✅ update local state immediately (instant UI refresh)
+        afkPresetTexts[idx] = text
+
+        when (s) {
             1 -> userPreferencesRepository.saveAfkPreset1(text)
             2 -> userPreferencesRepository.saveAfkPreset2(text)
             else -> userPreferencesRepository.saveAfkPreset3(text)
@@ -437,9 +452,17 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     suspend fun saveCyclePreset(slot: Int, lines: List<String>) {
+        val s = slot.coerceIn(1, 5)
+        val idx = s - 1
+
         val messages = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
         val interval = cycleIntervalSeconds.coerceAtLeast(2)
-        when (slot.coerceIn(1, 5)) {
+
+        // ✅ update local state immediately (instant UI refresh)
+        cyclePresetMessages[idx] = messages
+        cyclePresetIntervals[idx] = interval
+
+        when (s) {
             1 -> userPreferencesRepository.saveCyclePreset1(messages, interval)
             2 -> userPreferencesRepository.saveCyclePreset2(messages, interval)
             3 -> userPreferencesRepository.saveCyclePreset3(messages, interval)
@@ -449,25 +472,33 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     suspend fun loadCyclePreset(slot: Int) {
-        val (messages, interval) = when (slot.coerceIn(1, 5)) {
+        val s = slot.coerceIn(1, 5)
+        val (messages, interval) = when (s) {
             1 -> userPreferencesRepository.cyclePreset1Messages.first() to userPreferencesRepository.cyclePreset1Interval.first()
             2 -> userPreferencesRepository.cyclePreset2Messages.first() to userPreferencesRepository.cyclePreset2Interval.first()
             3 -> userPreferencesRepository.cyclePreset3Messages.first() to userPreferencesRepository.cyclePreset3Interval.first()
             4 -> userPreferencesRepository.cyclePreset4Messages.first() to userPreferencesRepository.cyclePreset4Interval.first()
             else -> userPreferencesRepository.cyclePreset5Messages.first() to userPreferencesRepository.cyclePreset5Interval.first()
         }
+
         cycleIntervalSeconds = interval.coerceAtLeast(2)
         persistCycleInterval()
+
         setCycleLinesFromText(messages)
         persistCycleLines()
     }
 
+    // =========================
+    // Notification Access intent
+    // =========================
     fun notificationAccessIntent(): Intent {
         return Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
+    // =========================
     // Music flags
+    // =========================
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
         rebuildAndMaybeSendCombined(forceSend = true)
@@ -484,10 +515,11 @@ VRChat → Settings → OSC → Enable OSC.
         rebuildAndMaybeSendCombined(forceSend = true)
     }
 
+    // =========================
     // AFK sender
+    // =========================
     fun startAfkSender(local: Boolean = false) {
         if (!afkEnabled) return
-
         afkJob?.cancel()
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
@@ -500,16 +532,16 @@ VRChat → Settings → OSC → Enable OSC.
     fun stopAfkSender(clearFromChatbox: Boolean) {
         afkJob?.cancel()
         afkJob = null
-        if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
-        }
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
     }
 
     fun sendAfkNow(local: Boolean = false) {
         rebuildAndMaybeSendCombined(forceSend = true, local = local)
     }
 
+    // =========================
     // Cycle sender
+    // =========================
     fun startCycle(local: Boolean = false) {
         val msgs = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         if (!cycleEnabled || msgs.isEmpty()) return
@@ -536,15 +568,14 @@ VRChat → Settings → OSC → Enable OSC.
     fun stopCycle(clearFromChatbox: Boolean) {
         cycleJob?.cancel()
         cycleJob = null
-        if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
-        }
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
     }
 
+    // =========================
     // Now Playing sender
+    // =========================
     fun startNowPlayingSender(local: Boolean = false) {
         if (!spotifyEnabled) return
-
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
@@ -557,9 +588,7 @@ VRChat → Settings → OSC → Enable OSC.
     fun stopNowPlayingSender(clearFromChatbox: Boolean) {
         nowPlayingJob?.cancel()
         nowPlayingJob = null
-        if (clearFromChatbox) {
-            rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
-        }
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
@@ -570,11 +599,12 @@ VRChat → Settings → OSC → Enable OSC.
         stopCycle(clearFromChatbox = false)
         stopNowPlayingSender(clearFromChatbox = false)
         stopAfkSender(clearFromChatbox = false)
-
         if (clearFromChatbox) clearChatbox()
     }
 
+    // =========================
     // Combined builder + throttled sender
+    // =========================
     private fun rebuildAndMaybeSendCombined(
         forceSend: Boolean,
         local: Boolean = false,
@@ -598,6 +628,7 @@ VRChat → Settings → OSC → Enable OSC.
         debugLastCombinedOsc = combined
 
         val nothingActive = afkLine.isBlank() && cycleLine.isBlank() && musicLines.isEmpty()
+
         if (forceClearIfAllOff && nothingActive) {
             clearChatbox(local)
             return
@@ -624,7 +655,9 @@ VRChat → Settings → OSC → Enable OSC.
         return msgs.getOrNull(cycleIndex % msgs.size).orEmpty()
     }
 
+    // =========================
     // Now Playing builder
+    // =========================
     private fun buildNowPlayingLines(): List<String> {
         val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
         val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
@@ -649,57 +682,74 @@ VRChat → Settings → OSC → Enable OSC.
             val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
             val adj = (elapsed * nowPlayingSpeed).toLong()
             (posSnapshot + max(0L, adj)).coerceAtMost(dur)
-        } else posSnapshot
+        } else {
+            posSnapshot
+        }
 
         val bar = renderProgressBar(spotifyPreset, pos, max(1L, dur))
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
         val status = if (!nowPlayingIsPlaying) "Paused" else ""
+
         val line2 = listOf(bar, time, status).filter { it.isNotBlank() }.joinToString(" ").trim()
 
         return listOf(line1, line2).filter { it.isNotBlank() }
     }
 
+    // =========================
+    // ✅ FIX #2: Geometry fills BEHIND dot
+    // =========================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> {
+            1 -> { // Love
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
                 inner[idx] = '◉'
                 "♡" + inner.concatToString() + "♡"
             }
-            2 -> {
+
+            2 -> { // Minimal
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-            3 -> {
+
+            3 -> { // Crystal
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
                 bg[idx] = '◉'
                 bg.concatToString()
             }
-            4 -> {
+
+            4 -> { // Soundwave
                 val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
                 out[idx] = '●'
                 out.concatToString()
             }
-            else -> {
-                // Geometry fix: 3 filled blocks + 8 empty slots with moving dot only in empties
-                val prefix = charArrayOf('▣','▣','▣')
-                val emptySlots = 8
-                val idx = (p * (emptySlots - 1)).toInt()
-                val empties = CharArray(emptySlots) { '▢' }
-                empties[idx] = '◉'
-                (prefix + empties).concatToString()
+
+            else -> { // Geometry (fill behind dot)
+                val slots = 10
+                val idx = (p * (slots - 1)).toInt()
+
+                // Before idx = filled ▣
+                // idx = ◉
+                // After idx = empty ▢
+                val out = CharArray(slots) { i ->
+                    when {
+                        i < idx -> '▣'
+                        i == idx -> '◉'
+                        else -> '▢'
+                    }
+                }
+                out.concatToString()
             }
         }
     }
@@ -712,11 +762,13 @@ VRChat → Settings → OSC → Enable OSC.
     }
 
     private fun joinWithLimit(lines: List<String>, limit: Int): String {
+        if (lines.isEmpty()) return ""
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
 
         val out = ArrayList<String>()
         var total = 0
+
         for (line in clean) {
             val add = if (out.isEmpty()) line.length else (1 + line.length)
             if (total + add > limit) {
@@ -727,6 +779,7 @@ VRChat → Settings → OSC → Enable OSC.
             out.add(line)
             total += add
         }
+
         return out.joinToString("\n")
     }
 
