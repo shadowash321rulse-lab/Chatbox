@@ -1,15 +1,65 @@
-// Root build.gradle (DO NOT put android { } here)
-
 plugins {
-    // Versions are REQUIRED here, but we do NOT apply them at root
-    id 'com.android.application' version '8.2.2' apply false
-    id 'com.android.library' version '8.2.2' apply false
-    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
-
-    // FIX: AboutLibraries plugin version must be declared somewhere
-    id 'com.mikepenz.aboutlibraries.plugin' version '11.3.0' apply false
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
-tasks.register('clean', Delete) {
-    delete rootProject.buildDir
+android {
+    namespace = "com.scrapw.chatbox"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.scrapw.chatbox"
+        minSdk = 26
+        targetSdk = 34
+
+        // ✅ Auto-increment on GitHub Actions
+        val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = runNumber
+        versionName = "1.0.$runNumber"
+
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            // ✅ IMPORTANT: to update over old installs, signing must be consistent
+            // If you already have signing configured elsewhere, keep it there.
+            // Otherwise set signingConfig once you add a keystore (see note below).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+
+        debug {
+            isMinifyEnabled = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+dependencies {
+    // keep your existing deps here (don’t delete them)
 }
