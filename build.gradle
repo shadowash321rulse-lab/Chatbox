@@ -8,7 +8,8 @@ buildscript {
     }
     dependencies {
         classpath "com.android.tools.build:gradle:8.2.2"
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22"
+        // ✅ Bump Kotlin to match Compose Compiler 1.5.14 requirement
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24"
     }
 }
 
