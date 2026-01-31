@@ -149,7 +149,7 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // 🔇 ALWAYS FORCE NO SFX (removes VRChat send sound)
+        // 🔇 ALWAYS FORCE NO SFX
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
@@ -176,15 +176,14 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // SEND COORDINATOR
-    // (prevents canceling + reduces VRChat cutouts)
+    // SEND COORDINATOR (prevents canceling + reduces cutouts)
     // =========================================================
     private val MIN_SEND_COOLDOWN_MS = 2_000L
     private var lastSendAtMs: Long = 0L
     private var sendCoordinatorJob: Job? = null
     private val sendRequested = AtomicBoolean(false)
 
-    // Debug: “what each module is generating”
+    // Debug
     var debugLastAfkOsc by mutableStateOf("")
     var debugLastCycleOsc by mutableStateOf("")
     var debugLastMusicOsc by mutableStateOf("")
@@ -192,7 +191,7 @@ class ChatboxViewModel(
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
     // =========================================================
-    // AFK (toggle is NOT persisted; text IS persisted)
+    // AFK (toggle not persisted; text/presets persisted)
     // =========================================================
     var afkEnabled by mutableStateOf(false)
     var afkMessage by mutableStateOf("AFK 🌙 back soon")
@@ -259,8 +258,10 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // CYCLE
+    // CYCLE (limit to 10 items)
     // =========================================================
+    private val MAX_CYCLE_LINES = 10
+
     var cycleEnabled by mutableStateOf(false)
     var cycleMessages by mutableStateOf("")
     var cycleIntervalSeconds by mutableStateOf(3)
@@ -291,14 +292,30 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.saveCycleInterval(s) }
     }
 
+    private fun normalizeCycleMessages(input: String): String {
+        val lines = input
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(MAX_CYCLE_LINES)
+
+        return lines.joinToString("\n")
+    }
+
     fun updateCycleMessages(text: String) {
-        cycleMessages = text
-        viewModelScope.launch { userPreferencesRepository.saveCycleMessages(text) }
+        val normalized = normalizeCycleMessages(text)
+        cycleMessages = normalized
+        viewModelScope.launch { userPreferencesRepository.saveCycleMessages(normalized) }
         requestCombinedSend()
     }
 
     fun startCycle() {
-        val msgs = cycleMessages.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val msgs = cycleMessages
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(MAX_CYCLE_LINES)
+
         if (!cycleEnabled || msgs.isEmpty()) return
 
         cycleRunning = true
@@ -328,9 +345,10 @@ class ChatboxViewModel(
     fun saveCyclePreset(slot: Int, messages: String) {
         viewModelScope.launch {
             val s = slot.coerceIn(1, 5)
+            val normalized = normalizeCycleMessages(messages)
             userPreferencesRepository.saveCyclePreset(
                 s,
-                messages,
+                normalized,
                 cycleIntervalSeconds.coerceAtLeast(2)
             )
             refreshPresetPreviews()
@@ -341,7 +359,7 @@ class ChatboxViewModel(
         viewModelScope.launch {
             val s = slot.coerceIn(1, 5)
             val (msgs, interval) = userPreferencesRepository.getCyclePresetOnce(s)
-            cycleMessages = msgs
+            cycleMessages = normalizeCycleMessages(msgs)
             cycleIntervalSeconds = interval.coerceAtLeast(2)
             userPreferencesRepository.saveCycleMessages(cycleMessages)
             userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds)
@@ -377,7 +395,7 @@ class ChatboxViewModel(
     init {
         viewModelScope.launch {
             afkMessage = userPreferencesRepository.afkMessage.first()
-            cycleMessages = userPreferencesRepository.cycleMessages.first()
+            cycleMessages = normalizeCycleMessages(userPreferencesRepository.cycleMessages.first())
             cycleIntervalSeconds = userPreferencesRepository.cycleInterval.first().coerceAtLeast(2)
             cycleEnabled = userPreferencesRepository.cycleEnabled.first()
             refreshPresetPreviews()
@@ -579,7 +597,7 @@ class ChatboxViewModel(
     private fun sendToVrchatRaw(text: String, local: Boolean) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // 🔇 ALWAYS FORCE NO SFX (removes VRChat send sound)
+        // 🔇 ALWAYS FORCE NO SFX
         osc.sendMessage(
             text,
             messengerUiState.value.isSendImmediately,
@@ -626,7 +644,6 @@ class ChatboxViewModel(
                 out.concatToString()
             }
             else -> {
-                // ✅ Geometry “fills” cleanly to the end
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt().coerceIn(0, slots - 1)
                 val out = CharArray(slots) { i -> if (i < idx) '▣' else '▢' }
