@@ -1,78 +1,12 @@
-import java.util.Properties
+// Root build.gradle (Groovy)
+// Do NOT apply com.android.application here.
+// We only declare plugin versions so modules can use them.
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id "com.android.application" version "8.4.2" apply false
+    id "org.jetbrains.kotlin.android" version "1.9.24" apply false
 }
 
-android {
-    namespace = "com.scrapw.chatbox"
-    compileSdk = 34
-
-    defaultConfig {
-        applicationId = "com.scrapw.chatbox"
-        minSdk = 26
-        targetSdk = 34
-
-        // ✅ Auto increment for CI builds (GitHub Actions)
-        val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionCode = runNumber
-        versionName = "1.0.$runNumber"
-
-        vectorDrawables { useSupportLibrary = true }
-    }
-
-    // ✅ Signing (only used if keystore.properties exists)
-    signingConfigs {
-        create("release") {
-            val propsFile = rootProject.file("keystore/keystore.properties")
-            if (propsFile.exists()) {
-                val props = Properties().apply { load(propsFile.inputStream()) }
-                val storeFilePath = props.getProperty("storeFile") ?: ""
-                storeFile = rootProject.file(storeFilePath)
-                storePassword = props.getProperty("storePassword")
-                keyAlias = props.getProperty("keyAlias")
-                keyPassword = props.getProperty("keyPassword")
-            }
-        }
-    }
-
-    buildTypes {
-        debug {
-            isMinifyEnabled = false
-        }
-
-        release {
-            isMinifyEnabled = false
-
-            // ✅ If signing config is available, use it (needed for updating over old installs)
-            val propsFile = rootProject.file("keystore/keystore.properties")
-            if (propsFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions { jvmTarget = "17" }
-
-    buildFeatures { compose = true }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
-
-    packaging {
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-    }
-}
-
-dependencies {
-    // keep your existing deps here (don’t delete them)
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
 }
