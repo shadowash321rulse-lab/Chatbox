@@ -107,6 +107,28 @@ class ChatboxViewModel(
         initialValue = MessengerUiState()
     )
 
+    // ✅ Needed by MessageOption.kt + old SettingsScreen.kt
+    fun onRealtimeMsgChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(enabled) }
+    }
+
+    // NOTE: We still store the setting for UI compatibility,
+    // but VRC-A forces NO SFX when sending.
+    fun onTriggerSfxChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveIsTriggerSFX(enabled) }
+    }
+
+    fun onTypingIndicatorChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(enabled) }
+    }
+
+    fun onSendImmediatelyChanged(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(enabled) }
+    }
+
+    // ----------------------------
+    // OSC
+    // ----------------------------
     private val remoteChatboxOSC = ChatboxOSC(
         ipAddress = runBlocking { userPreferencesRepository.ipAddress.first() },
         port = 9000
@@ -149,7 +171,7 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // 🔇 ALWAYS FORCE NO SFX
+        // 🔇 Always force no SFX
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
@@ -589,7 +611,7 @@ class ChatboxViewModel(
     }
 
     private fun sendCombinedToVrchat(text: String, local: Boolean = false) {
-        val payload = if (text.isBlank()) " " else text // blank clears immediately
+        val payload = if (text.isBlank()) " " else text
         sendToVrchatRaw(payload, local)
         lastSendAtMs = System.currentTimeMillis()
     }
@@ -597,7 +619,7 @@ class ChatboxViewModel(
     private fun sendToVrchatRaw(text: String, local: Boolean) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // 🔇 ALWAYS FORCE NO SFX
+        // 🔇 Always force no SFX
         osc.sendMessage(
             text,
             messengerUiState.value.isSendImmediately,
@@ -608,7 +630,7 @@ class ChatboxViewModel(
     }
 
     // =========================================================
-    // PROGRESS BAR PRESETS (Geometry fixed)
+    // PROGRESS BAR PRESETS
     // =========================================================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
