@@ -12,7 +12,6 @@ android {
         minSdk 26
         targetSdk 34
 
-        // Back to simple/stable versioning (no GitHub-run auto changes)
         versionCode 1
         versionName "1.0"
 
@@ -43,10 +42,9 @@ android {
         compose true
     }
 
-    // IMPORTANT: Kotlin is 1.9.22 (from root build.gradle),
-    // so use a Compose compiler extension compatible with it.
+    // ✅ Compose compiler that matches Kotlin 1.9.24
     composeOptions {
-        kotlinCompilerExtensionVersion "1.5.11"
+        kotlinCompilerExtensionVersion "1.5.14"
     }
 
     packagingOptions {
@@ -57,24 +55,19 @@ android {
 }
 
 dependencies {
-    // Compose BOM
     implementation platform("androidx.compose:compose-bom:2024.06.00")
     implementation "androidx.compose.ui:ui"
     implementation "androidx.compose.ui:ui-tooling-preview"
     implementation "androidx.compose.material3:material3"
     debugImplementation "androidx.compose.ui:ui-tooling"
 
-    // Lifecycle / ViewModel
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.4"
     implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4"
     implementation "androidx.activity:activity-compose:1.9.1"
 
-    // Coroutines
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
 
-    // DataStore (you are using it)
     implementation "androidx.datastore:datastore-preferences:1.1.1"
 
-    // OSC (fixes com.illposed.osc unresolved)
     implementation "com.illposed.osc:javaosc-core:0.8"
 }
