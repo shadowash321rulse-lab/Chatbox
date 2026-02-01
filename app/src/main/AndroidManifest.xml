@@ -4,7 +4,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Overlay permission (user enables in Settings) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Battery optimization exemption request (user confirms in Settings prompt) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name="com.scrapw.chatbox.ChatboxApplication"
@@ -18,7 +23,9 @@
         tools:targetApi="31">
 
         <!-- Existing overlay -->
-        <service android:name=".overlay.OverlayService" />
+        <service
+            android:name=".overlay.OverlayService"
+            android:exported="false" />
 
         <!-- Now Playing listener (Notification Access) -->
         <service
