@@ -2,7 +2,6 @@ package com.scrapw.chatbox
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.clickable
@@ -194,49 +193,35 @@ private fun DashboardPage(vm: ChatboxViewModel) {
         }
     }
 
-    // --- Permission status helpers ---
-    val overlayAllowed = remember {
-        mutableStateOf(Settings.canDrawOverlays(ctx))
-    }
-    val batteryIgnored = remember {
-        val pm = ctx.getSystemService(PowerManager::class.java)
-        mutableStateOf(pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true)
+    // "Small slide" card (collapsible, not a separate tab)
+    var permsCollapsed by rememberSaveable { mutableStateOf(true) }
+
+    fun canOverlay(): Boolean = Settings.canDrawOverlays(ctx)
+
+    fun isBatteryOptimizationsIgnored(): Boolean {
+        val pm = ctx.getSystemService(PowerManager::class.java) ?: return false
+        return pm.isIgnoringBatteryOptimizations(ctx.packageName)
     }
 
-    fun refreshPermissionStatus() {
-        overlayAllowed.value = Settings.canDrawOverlays(ctx)
-        val pm = ctx.getSystemService(PowerManager::class.java)
-        batteryIgnored.value = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
-    }
-
-    fun openOverlaySettings() {
-        val intent = Intent(
+    fun overlayIntent(): Intent {
+        // Per-app overlay screen
+        return Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:${ctx.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        ctx.startActivity(intent)
     }
 
-    fun requestIgnoreBatteryOptimizations() {
-        // Preferred: direct request screen for this app
-        val direct = Intent(
-            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            Uri.parse("package:${ctx.packageName}")
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-        // Fallback: general battery optimization screen
-        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    fun batteryIntent(): Intent {
+        // General screen where user can disable optimizations for apps
+        return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
-        try {
-            ctx.startActivity(direct)
-        } catch (_: Exception) {
-            try {
-                ctx.startActivity(fallback)
-            } catch (_: Exception) {
-                // nothing else we can do
-            }
-        }
+    fun permsPreviewLine(): String {
+        val notif = "Notif: open"
+        val overlay = "Overlay: " + (if (canOverlay()) "on" else "off")
+        val batt = "Battery: " + (if (isBatteryOptimizationsIgnored()) "unrestricted" else "optimized")
+        return listOf(notif, overlay, batt).joinToString(" • ")
     }
 
     PageContainer {
@@ -272,51 +257,75 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             )
         }
 
-        // ✅ New: Permissions / Keep Alive
-        SectionCard(
-            title = "Permissions / Keep Alive",
-            subtitle = "Helps Now Playing work + prevents Android killing the app."
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        ctx.startActivity(vm.notificationAccessIntent())
-                        refreshPermissionStatus()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Notification Access") }
+        // ✅ Permissions & System (collapsible slide)
+        ElevatedCard {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { permsCollapsed = !permsCollapsed },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(text = "Permissions & System", style = MaterialTheme.typography.titleSmall)
+                        if (permsCollapsed) {
+                            Text(
+                                text = permsPreviewLine(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = if (permsCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                        contentDescription = null
+                    )
+                }
 
-                OutlinedButton(
-                    onClick = {
-                        openOverlaySettings()
-                        refreshPermissionStatus()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Overlay") }
+                if (!permsCollapsed) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Notification access (moved here)
+                        OutlinedButton(
+                            onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Open Notification Access settings") }
+
+                        // Overlay permission
+                        OutlinedButton(
+                            onClick = { ctx.startActivity(overlayIntent()) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                if (canOverlay()) "Overlay permission: ON (tap to review)"
+                                else "Enable overlay permission (draw over apps)"
+                            )
+                        }
+
+                        // Battery optimization
+                        OutlinedButton(
+                            onClick = { ctx.startActivity(batteryIntent()) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                if (isBatteryOptimizationsIgnored()) "Battery optimization: Unrestricted (tap to review)"
+                                else "Disable battery optimization (recommended)"
+                            )
+                        }
+
+                        Text(
+                            text = "Tip: Overlay + battery unrestricted helps Cycle/AFK/Now Playing stay alive.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
-
-            OutlinedButton(
-                onClick = {
-                    requestIgnoreBatteryOptimizations()
-                    refreshPermissionStatus()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Disable battery optimization") }
-
-            val overlayText = if (overlayAllowed.value) "Overlay: Enabled" else "Overlay: Off"
-            val batteryText = if (batteryIgnored.value) "Battery optimization: Disabled" else "Battery optimization: On"
-
-            Text(
-                text = "$overlayText  •  $batteryText",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Text(
-                text = "Tip: Battery optimization is the big one for staying alive in background.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
 
         SectionCard(
@@ -371,12 +380,8 @@ private fun CyclePage(vm: ChatboxViewModel) {
         }
     }
 
-    LaunchedEffect(vm.cycleLines.size) {
-        syncCycleLineFieldsFromVm()
-    }
-    LaunchedEffect(vm.cycleLines.toList()) {
-        syncCycleLineFieldsFromVm()
-    }
+    LaunchedEffect(vm.cycleLines.size) { syncCycleLineFieldsFromVm() }
+    LaunchedEffect(vm.cycleLines.toList()) { syncCycleLineFieldsFromVm() }
 
     fun afkPresetsPreview(): String {
         val parts = (1..3).map { slot ->
@@ -570,6 +575,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 value = cycleIntervalInput,
                 onValueChange = { v ->
                     cycleIntervalInput = v
+                    // allow empty while typing; only apply when valid
                     v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -705,11 +711,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 )
             }
 
-            OutlinedButton(
-                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Open Notification Access settings") }
-
             OutlinedTextField(
                 value = refreshInput,
                 onValueChange = { v ->
@@ -724,6 +725,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 
             Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
+            // Hard locked preset names (Love/Minimal/Crystal/Soundwave/Geometry)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
@@ -873,11 +875,11 @@ TUTORIAL (Step by Step)
    Dashboard → Manual Send → type “hello” → Send
 
 6) Enable Now Playing:
-   Now Playing tab → Open Notification Access settings → enable VRC-A
+   Dashboard → Permissions & System → Open Notification Access settings → enable VRC-A
    Then restart VRC-A and play music.
 
 7) Start Now Playing sender:
-   Toggle Enable Now Playing block → Start
+   Now Playing tab → Toggle Enable Now Playing block → Start
 
 8) Cycle:
    Cycle tab → Enable Cycle → Add up to 10 lines → Start
@@ -945,12 +947,13 @@ Nothing appears in VRChat:
 - Same Wi-Fi
 
 Now Playing blank:
-- Enable Notification Access
+- Dashboard → Permissions & System → enable Notification Access
 - Restart app
 - Start playing music (must show media notification)
 
-Progress not moving:
-- Depends on player. Try a different music app to compare.
+Background stopping:
+- Dashboard → Permissions & System → enable Overlay (optional)
+- Dashboard → Permissions & System → disable Battery optimization
         """.trimIndent()
     }
 
@@ -970,9 +973,6 @@ It’s meant for standalone / mobile-friendly setups where you want:
 - A live “Now Playing” music block (from your phone’s media notifications)
 - An AFK tag at the very top
 
-VRC-A is designed to be “easy to test” with debug indicators so you can tell
-what’s failing (connection, permissions, detection, etc).
-
 ============================================================
 IMPORTANT: VRChat OSC MUST BE ON
 ============================================================
@@ -984,6 +984,14 @@ IP ADDRESS (HEADSET)
 Quest / Android headset:
 Settings → Wi-Fi → tap network → Advanced → IP Address
 Example: 192.168.1.23
+
+============================================================
+PERMISSIONS & SYSTEM
+============================================================
+Dashboard → Permissions & System:
+- Notification Access: required for Now Playing
+- Overlay: optional (lets overlay UI work)
+- Battery optimization: recommended for background reliability
 
 ============================================================
 END
@@ -1044,3 +1052,4 @@ END
         }
     }
 }
+```0
