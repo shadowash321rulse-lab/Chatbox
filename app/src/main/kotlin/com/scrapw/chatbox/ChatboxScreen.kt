@@ -2,7 +2,7 @@ package com.scrapw.chatbox
 
 import android.content.Intent
 import android.net.Uri
-import android.os.PowerManager
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -74,9 +74,7 @@ fun ChatboxScreen(
                 }
             )
         },
-        bottomBar = {
-            SlimBottomBar(current = page, onSelect = { page = it })
-        }
+        bottomBar = { SlimBottomBar(current = page, onSelect = { page = it }) }
     ) { padding ->
         Box(
             Modifier
@@ -88,7 +86,7 @@ fun ChatboxScreen(
                 AppPage.Cycle -> CyclePage(chatboxViewModel)
                 AppPage.NowPlaying -> NowPlayingPage(chatboxViewModel)
                 AppPage.Debug -> DebugPage(chatboxViewModel)
-                AppPage.Info -> InfoPage(chatboxViewModel)
+                AppPage.Info -> InfoPage()
             }
         }
     }
@@ -182,46 +180,30 @@ private fun DashboardPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
     val uiState by vm.messengerUiState.collectAsState()
 
-    // ✅ use TextFieldValue so cursor never jumps, and allow dots (KeyboardType.Text)
+    // ✅ IP input uses TextFieldValue to avoid cursor jumps
     var ipInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(uiState.ipAddress))
     }
-
     LaunchedEffect(uiState.ipAddress) {
-        if (ipInput.text.isBlank()) {
-            ipInput = TextFieldValue(uiState.ipAddress)
-        }
+        if (ipInput.text.isBlank()) ipInput = TextFieldValue(uiState.ipAddress)
     }
 
-    // "Small slide" card (collapsible, not a separate tab)
-    var permsCollapsed by rememberSaveable { mutableStateOf(true) }
+    // ✅ Small “slide” / collapsible system card (not its own nav tab)
+    var sysCollapsed by rememberSaveable { mutableStateOf(true) }
 
-    fun canOverlay(): Boolean = Settings.canDrawOverlays(ctx)
-
-    fun isBatteryOptimizationsIgnored(): Boolean {
-        val pm = ctx.getSystemService(PowerManager::class.java) ?: return false
-        return pm.isIgnoringBatteryOptimizations(ctx.packageName)
-    }
-
-    fun overlayIntent(): Intent {
-        // Per-app overlay screen
-        return Intent(
+    fun openOverlaySettings() {
+        val intent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
             Uri.parse("package:${ctx.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
     }
 
-    fun batteryIntent(): Intent {
-        // General screen where user can disable optimizations for apps
-        return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    fun openBatteryOptimizationSettings() {
+        // We keep this simple: open the system list/settings screen.
+        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    fun permsPreviewLine(): String {
-        val notif = "Notif: open"
-        val overlay = "Overlay: " + (if (canOverlay()) "on" else "off")
-        val batt = "Battery: " + (if (isBatteryOptimizationsIgnored()) "unrestricted" else "optimized")
-        return listOf(notif, overlay, batt).joinToString(" • ")
+        ctx.startActivity(intent)
     }
 
     PageContainer {
@@ -257,69 +239,56 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             )
         }
 
-        // ✅ Permissions & System (collapsible slide)
+        // ✅ Permissions & System “slide” (collapsed by default)
         ElevatedCard {
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { permsCollapsed = !permsCollapsed },
+                        .clickable { sysCollapsed = !sysCollapsed },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(text = "Permissions & System", style = MaterialTheme.typography.titleSmall)
-                        if (permsCollapsed) {
+                        Text("Permissions & System", style = MaterialTheme.typography.titleSmall)
+                        if (sysCollapsed) {
                             Text(
-                                text = permsPreviewLine(),
+                                "Notification access • Overlay • Battery optimization",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                     Icon(
-                        imageVector = if (permsCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                        imageVector = if (sysCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
                         contentDescription = null
                     )
                 }
 
-                if (!permsCollapsed) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        // Notification access (moved here)
-                        OutlinedButton(
-                            onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Open Notification Access settings") }
+                if (!sysCollapsed) {
+                    OutlinedButton(
+                        onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Open Notification Access settings") }
 
-                        // Overlay permission
-                        OutlinedButton(
-                            onClick = { ctx.startActivity(overlayIntent()) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                if (canOverlay()) "Overlay permission: ON (tap to review)"
-                                else "Enable overlay permission (draw over apps)"
-                            )
-                        }
+                    OutlinedButton(
+                        onClick = { openOverlaySettings() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Open Overlay permission (draw over apps)") }
 
-                        // Battery optimization
-                        OutlinedButton(
-                            onClick = { ctx.startActivity(batteryIntent()) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                if (isBatteryOptimizationsIgnored()) "Battery optimization: Unrestricted (tap to review)"
-                                else "Disable battery optimization (recommended)"
-                            )
-                        }
+                    OutlinedButton(
+                        onClick = { openBatteryOptimizationSettings() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Open Battery optimization settings") }
 
+                    if (Build.VERSION.SDK_INT >= 31) {
                         Text(
-                            text = "Tip: Overlay + battery unrestricted helps Cycle/AFK/Now Playing stay alive.",
+                            text = "Tip: On some phones you must disable optimization manually after opening the screen.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -355,28 +324,19 @@ private fun CyclePage(vm: ChatboxViewModel) {
         mutableStateOf(TextFieldValue(vm.cycleIntervalSeconds.toString()))
     }
     LaunchedEffect(vm.cycleIntervalSeconds) {
-        // only update if different (prevents fighting the user)
         val target = vm.cycleIntervalSeconds.toString()
-        if (cycleIntervalInput.text != target) {
-            cycleIntervalInput = TextFieldValue(target)
-        }
+        if (cycleIntervalInput.text != target) cycleIntervalInput = TextFieldValue(target)
     }
 
     // ✅ Fix cursor-jump for cycle lines by keeping TextFieldValue per-row
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
 
     fun syncCycleLineFieldsFromVm() {
-        // Drop keys no longer valid
         val validKeys = vm.cycleLines.indices.toSet()
-        cycleLineFields.keys.toList().forEach { k ->
-            if (k !in validKeys) cycleLineFields.remove(k)
-        }
-        // Ensure each line has a field
+        cycleLineFields.keys.toList().forEach { k -> if (k !in validKeys) cycleLineFields.remove(k) }
         vm.cycleLines.forEachIndexed { idx, text ->
             val existing = cycleLineFields[idx]
-            if (existing == null || existing.text != text) {
-                cycleLineFields[idx] = TextFieldValue(text)
-            }
+            if (existing == null || existing.text != text) cycleLineFields[idx] = TextFieldValue(text)
         }
     }
 
@@ -386,7 +346,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
     fun afkPresetsPreview(): String {
         val parts = (1..3).map { slot ->
             val p = vm.getAfkPresetPreview(slot).ifBlank { "empty" }
-            "${slot}:${p}"
+            "$slot:$p"
         }
         return parts.joinToString("  •  ").take(80).let { if (it.length >= 80) it.take(79) + "…" else it }
     }
@@ -394,25 +354,19 @@ private fun CyclePage(vm: ChatboxViewModel) {
     fun cyclePresetsPreview(): String {
         val parts = (1..5).map { slot ->
             val p = vm.getCyclePresetPreview(slot).ifBlank { "empty" }
-            "${slot}:${p}"
+            "$slot:$p"
         }
         return parts.joinToString("  •  ").take(80).let { if (it.length >= 80) it.take(79) + "…" else it }
     }
 
     PageContainer {
-        // -------------------------
-        // AFK
-        // -------------------------
         SectionCard(
             title = "AFK (top line)",
             subtitle = "AFK is always the top line. Forced interval. Stop clears it instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "AFK enabled")
-                Switch(
-                    checked = vm.afkEnabled,
-                    onCheckedChange = { vm.afkEnabled = it }
-                )
+                Text("AFK enabled")
+                Switch(checked = vm.afkEnabled, onCheckedChange = { vm.afkEnabled = it })
             }
 
             OutlinedTextField(
@@ -439,10 +393,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(text = "AFK Presets (3)", style = MaterialTheme.typography.titleSmall)
+                            Text("AFK Presets (3)", style = MaterialTheme.typography.titleSmall)
                             if (vm.afkPresetsCollapsed) {
                                 Text(
-                                    text = afkPresetsPreview(),
+                                    afkPresetsPreview(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -463,11 +417,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         val preview = vm.getAfkPresetPreview(slot).ifBlank { "(empty)" }
-
-                                        Text(
-                                            text = "Preset $slot — $preview",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
+                                        Text("Preset $slot — $preview")
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedButton(
@@ -508,28 +458,18 @@ private fun CyclePage(vm: ChatboxViewModel) {
             ) { Text("Send once") }
         }
 
-        // -------------------------
-        // Cycle
-        // -------------------------
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "No more ‘press enter’. Add up to 10 lines. Stop clears instantly."
+            subtitle = "Add up to 10 lines. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Cycle enabled")
-                Switch(
-                    checked = vm.cycleEnabled,
-                    onCheckedChange = { vm.cycleEnabled = it }
-                )
+                Text("Cycle enabled")
+                Switch(checked = vm.cycleEnabled, onCheckedChange = { vm.cycleEnabled = it })
             }
 
-            // Editor
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (vm.cycleLines.isEmpty()) {
-                    Text(
-                        text = "No lines yet. Tap Add Line.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Text("No lines yet. Tap Add Line.", style = MaterialTheme.typography.bodySmall)
                 }
 
                 vm.cycleLines.forEachIndexed { idx, _ ->
@@ -575,7 +515,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 value = cycleIntervalInput,
                 onValueChange = { v ->
                     cycleIntervalInput = v
-                    // allow empty while typing; only apply when valid
                     v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -600,10 +539,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(text = "Cycle Presets (5)", style = MaterialTheme.typography.titleSmall)
+                            Text("Cycle Presets (5)", style = MaterialTheme.typography.titleSmall)
                             if (vm.cyclePresetsCollapsed) {
                                 Text(
-                                    text = cyclePresetsPreview(),
+                                    cyclePresetsPreview(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -624,10 +563,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         val preview = vm.getCyclePresetPreview(slot).ifBlank { "(empty)" }
-                                        Text(
-                                            text = "Preset $slot — $preview",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
+                                        Text("Preset $slot — $preview")
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedButton(
@@ -674,9 +610,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
     }
     LaunchedEffect(vm.musicRefreshSeconds) {
         val target = vm.musicRefreshSeconds.toString()
-        if (refreshInput.text != target) {
-            refreshInput = TextFieldValue(target)
-        }
+        if (refreshInput.text != target) refreshInput = TextFieldValue(target)
     }
 
     // Animated preview (UI-only)
@@ -696,19 +630,13 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             subtitle = "Uses Notification Access. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Enable Now Playing block")
-                Switch(
-                    checked = vm.spotifyEnabled,
-                    onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
-                )
+                Text("Enable Now Playing block")
+                Switch(checked = vm.spotifyEnabled, onCheckedChange = { vm.setSpotifyEnabledFlag(it) })
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Demo mode (testing)")
-                Switch(
-                    checked = vm.spotifyDemoEnabled,
-                    onCheckedChange = { vm.setSpotifyDemoFlag(it) }
-                )
+                Text("Demo mode (testing)")
+                Switch(checked = vm.spotifyDemoEnabled, onCheckedChange = { vm.setSpotifyDemoFlag(it) })
             }
 
             OutlinedTextField(
@@ -723,9 +651,8 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
+            Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
-            // Hard locked preset names (Love/Minimal/Crystal/Soundwave/Geometry)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
@@ -746,16 +673,10 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(text = name, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = preview,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                Text(name, style = MaterialTheme.typography.titleSmall)
+                                Text(preview, fontFamily = FontFamily.Monospace)
                             }
-                            if (selected) {
-                                Text(text = "Selected", style = MaterialTheme.typography.labelMedium)
-                            }
+                            if (selected) Text("Selected", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -779,17 +700,22 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = vm.spotifyEnabled
             ) { Text("Send once now (test)") }
+
+            OutlinedButton(
+                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Notification Access settings") }
         }
 
         SectionCard(
             title = "Detected / Preview",
             subtitle = "If blank: enable access, restart app, then play music."
         ) {
-            Text(text = "Detected: ${vm.nowPlayingDetected}")
-            Text(text = "Artist: ${vm.lastNowPlayingArtist}")
-            Text(text = "Title: ${vm.lastNowPlayingTitle}")
-            Text(text = "App: ${vm.activePackage}")
-            Text(text = "Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
+            Text("Detected: ${vm.nowPlayingDetected}")
+            Text("Artist: ${vm.lastNowPlayingArtist}")
+            Text("Title: ${vm.lastNowPlayingTitle}")
+            Text("App: ${vm.activePackage}")
+            Text("Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
         }
     }
 }
@@ -801,10 +727,10 @@ private fun DebugPage(vm: ChatboxViewModel) {
             title = "Listener",
             subtitle = "Confirms Notification Access + media detection."
         ) {
-            Text(text = "Listener connected: ${vm.listenerConnected}")
-            Text(text = "Active package: ${vm.activePackage}")
-            Text(text = "Detected: ${vm.nowPlayingDetected}")
-            Text(text = "Playing: ${vm.nowPlayingIsPlaying}")
+            Text("Listener connected: ${vm.listenerConnected}")
+            Text("Active package: ${vm.activePackage}")
+            Text("Detected: ${vm.nowPlayingDetected}")
+            Text("Playing: ${vm.nowPlayingIsPlaying}")
         }
 
         SectionCard(
@@ -813,32 +739,29 @@ private fun DebugPage(vm: ChatboxViewModel) {
         ) {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "AFK:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
+                    Text("AFK:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Cycle:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
+                    Text("Cycle:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Music:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
+                    Text("Music:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Combined:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
+                    Text("Combined:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
                 }
             }
         }
 
-        SectionCard(
-            title = "VRChat send status",
-            subtitle = null
-        ) {
-            Text(text = "Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
+        SectionCard(title = "VRChat send status") {
+            Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
 
 @Composable
-private fun InfoPage(vm: ChatboxViewModel) {
+private fun InfoPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     val overview = remember {
@@ -848,44 +771,27 @@ Made by: Ashoska Mitsu Sisko
 Base: ScrapW’s Chatbox base (heavily revamped)
 
 VRC-A sends text to VRChat’s Chatbox using OSC over your Wi-Fi network.
-It’s designed for standalone/mobile setups with debug indicators so you can
-quickly tell what’s failing (connection, permissions, detection).
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-TUTORIAL (Step by Step)
+TUTORIAL
 
 1) Turn OSC ON in VRChat:
    VRChat → Settings → OSC → Enable OSC
 
 2) Same Wi-Fi:
-   Your phone and headset MUST be on the same Wi-Fi network.
+   Phone + headset must be on the same Wi-Fi.
 
-3) Find your headset IP:
-   Quest / Android headset:
-   Settings → Wi-Fi → tap your network → Advanced → IP Address
-   Example: 192.168.1.23
+3) Headset IP:
+   Settings → Wi-Fi → your network → Advanced → IP Address
 
 4) Put IP into VRC-A:
-   Dashboard → Headset IP address → Apply
+   Dashboard → Apply
 
-5) Test manual send:
-   Dashboard → Manual Send → type “hello” → Send
-
-6) Enable Now Playing:
-   Dashboard → Permissions & System → Open Notification Access settings → enable VRC-A
-   Then restart VRC-A and play music.
-
-7) Start Now Playing sender:
-   Now Playing tab → Toggle Enable Now Playing block → Start
-
-8) Cycle:
-   Cycle tab → Enable Cycle → Add up to 10 lines → Start
-
-9) AFK:
-   Cycle tab → Enable AFK → type AFK text → Start
+5) Test:
+   Manual Send → Send
         """.trimIndent()
     }
 
@@ -893,116 +799,48 @@ TUTORIAL (Step by Step)
         """
 FEATURES
 
-Connection / Manual Send
-- Set headset IP
-- Send one-off messages instantly
-
-AFK (Top Line)
-- AFK appears above Cycle + Music
-- Forced interval (no slider)
-- 3 saved presets (persist)
-
-Cycle
-- Up to 10 lines per cycle list
-- Min interval 2 seconds
-- 5 saved presets (persist)
-
-Now Playing
-- Reads phone media notifications (Notification Access)
-- Demo mode for testing
-- Independent refresh speed (min 2 seconds)
-- Hard locked progress presets:
-  Love / Minimal / Crystal / Soundwave / Geometry
-
-Debug
-- Listener status
-- Detected title/artist/app
-- Shows what AFK/Cycle/Music are generating + combined output
+- Manual send
+- Cycle (10 lines, presets)
+- AFK (top line, presets)
+- Now Playing (notification listener, progress presets)
+- Debug preview (combined output)
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-KNOWN ISSUES / NOTES
+NOTES
 
-- Some music players do not provide continuous playback position updates.
-  In that case, the bar may update only when the player refreshes state.
-
-- If your router has “client isolation”, phone → headset OSC traffic can be blocked.
-
-- If nothing shows in VRChat:
-  - Check IP
-  - Ensure OSC is enabled in VRChat
-  - Same Wi-Fi
+- Some players don't provide continuous playback position updates.
+- Some routers block client-to-client traffic.
         """.trimIndent()
     }
 
     val help = remember {
         """
-QUICK TROUBLESHOOTING
+HELP
 
-Nothing appears in VRChat:
-- Check headset IP
-- VRChat OSC enabled
-- Same Wi-Fi
-
-Now Playing blank:
-- Dashboard → Permissions & System → enable Notification Access
-- Restart app
-- Start playing music (must show media notification)
-
-Background stopping:
-- Dashboard → Permissions & System → enable Overlay (optional)
-- Dashboard → Permissions & System → disable Battery optimization
+Nothing in VRChat:
+- OSC enabled
+- correct IP
+- same Wi-Fi
         """.trimIndent()
     }
 
     val fullDoc = remember {
         """
 VRC-A (VRChat Assistant)
-Made by: Ashoska Mitsu Sisko
-Base: ScrapW’s Chatbox base (heavily revamped)
 
-============================================================
-WHAT THIS APP IS
-============================================================
-VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
-It’s meant for standalone / mobile-friendly setups where you want:
-- A quick “Send message” tool
-- A cycling status / rotating messages system
-- A live “Now Playing” music block (from your phone’s media notifications)
-- An AFK tag at the very top
-
-============================================================
-IMPORTANT: VRChat OSC MUST BE ON
-============================================================
-VRChat → Settings → OSC → Enable OSC
-
-============================================================
-IP ADDRESS (HEADSET)
-============================================================
-Quest / Android headset:
-Settings → Wi-Fi → tap network → Advanced → IP Address
-Example: 192.168.1.23
-
-============================================================
-PERMISSIONS & SYSTEM
-============================================================
-Dashboard → Permissions & System:
-- Notification Access: required for Now Playing
-- Overlay: optional (lets overlay UI work)
-- Battery optimization: recommended for background reliability
-
-============================================================
-END
-============================================================
+This app sends OSC text to VRChat Chatbox.
+Use Dashboard to set IP, Cycle for rotating lines, Now Playing for music,
+and Debug to see the combined output.
         """.trimIndent()
     }
 
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
+            subtitle = "Tutorial, features, and troubleshooting."
         ) {
             Row(
                 modifier = Modifier
@@ -1012,16 +850,15 @@ END
             ) {
                 InfoTab.entries.forEach { t ->
                     val selected = (t == tab)
-                    val colors = if (selected) ButtonDefaults.buttonColors()
-                    else ButtonDefaults.outlinedButtonColors()
+                    val colors =
+                        if (selected) ButtonDefaults.buttonColors()
+                        else ButtonDefaults.outlinedButtonColors()
 
                     Button(
                         onClick = { tab = t },
                         colors = colors,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(text = t.title)
-                    }
+                    ) { Text(t.title) }
                 }
             }
 
@@ -1035,21 +872,8 @@ END
             }
 
             SelectionContainer {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace
-                )
+                Text(text, fontFamily = FontFamily.Monospace)
             }
-        }
-
-        SectionCard(title = "About") {
-            Text(
-                text = "VRC-A = VRChat Assistant\n" +
-                    "Made by Ashoska Mitsu Sisko\n" +
-                    "Based on ScrapW’s Chatbox base (heavily revamped)."
-            )
         }
     }
 }
-```0
