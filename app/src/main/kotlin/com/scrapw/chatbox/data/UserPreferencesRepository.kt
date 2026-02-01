@@ -28,20 +28,20 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val MSG_TYPING_INDICATOR = booleanPreferencesKey("msg_typing_indicator")
         val MSG_SEND_DIRECTLY = booleanPreferencesKey("msg_send_directly")
 
-        // --- Cycle persistence ---
+        // Cycle persistence
         val CYCLE_ENABLED = booleanPreferencesKey("cycle_enabled")
         val CYCLE_MESSAGES = stringPreferencesKey("cycle_messages")
         val CYCLE_INTERVAL = intPreferencesKey("cycle_interval_seconds")
 
-        // --- AFK persistence (TEXT ONLY) ---
+        // AFK persistence (TEXT ONLY)
         val AFK_MESSAGE = stringPreferencesKey("afk_message")
 
-        // --- AFK presets (3) ---
+        // AFK presets (3)
         val AFK_PRESET_1 = stringPreferencesKey("afk_preset_1")
         val AFK_PRESET_2 = stringPreferencesKey("afk_preset_2")
         val AFK_PRESET_3 = stringPreferencesKey("afk_preset_3")
 
-        // --- Cycle presets (5) ---
+        // Cycle presets (5)
         val CYCLE_PRESET_1_MESSAGES = stringPreferencesKey("cycle_preset_1_messages")
         val CYCLE_PRESET_1_INTERVAL = intPreferencesKey("cycle_preset_1_interval")
 
@@ -57,10 +57,10 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_PRESET_5_MESSAGES = stringPreferencesKey("cycle_preset_5_messages")
         val CYCLE_PRESET_5_INTERVAL = intPreferencesKey("cycle_preset_5_interval")
 
-        // --- Now Playing preset (persisted) ---
+        // NEW: Now Playing preset selection
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
 
-        // --- UI collapse state (persisted) ---
+        // NEW: Collapse state for presets blocks
         val AFK_PRESETS_COLLAPSED = booleanPreferencesKey("afk_presets_collapsed")
         val CYCLE_PRESETS_COLLAPSED = booleanPreferencesKey("cycle_presets_collapsed")
     }
@@ -99,7 +99,7 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun saveCycleInterval(value: Int) = save(CYCLE_INTERVAL, value)
 
     // ----------------------------
-    // AFK persistence (TEXT ONLY)
+    // AFK persistence
     // ----------------------------
     val afkMessage = get(AFK_MESSAGE, "AFK 🌙 back soon")
     suspend fun saveAfkMessage(value: String) = save(AFK_MESSAGE, value)
@@ -164,13 +164,13 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     }
 
     // ----------------------------
-    // Now Playing preset (persisted)
+    // NEW: Now Playing preset (persist)
     // ----------------------------
     val spotifyPreset = get(SPOTIFY_PRESET, 1)
-    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value.coerceIn(1, 5))
+    suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
 
     // ----------------------------
-    // UI collapse state (persisted)
+    // NEW: Collapsed states (persist)
     // ----------------------------
     val afkPresetsCollapsed = get(AFK_PRESETS_COLLAPSED, true)
     suspend fun saveAfkPresetsCollapsed(value: Boolean) = save(AFK_PRESETS_COLLAPSED, value)
