@@ -50,7 +50,7 @@ private enum class InfoTab(val title: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatboxScreen(
-    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory),
+    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory)
 ) {
     var page by rememberSaveable { mutableStateOf(AppPage.Dashboard) }
 
@@ -174,105 +174,88 @@ private fun SectionCard(
 
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
-    val scope = rememberCoroutineScope()
+    val uiState by vm.messengerUiState.collectAsState()
+
     val ctx = LocalContext.current
 
-    // Permission status (best-effort)
-    val pkg = ctx.packageName
-    val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
-    val powerManager =
-        ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-    val ignoringBatteryOpt =
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            powerManager.isIgnoringBatteryOptimizations(pkg)
-        } else {
-            true
-        }
+    var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
+    LaunchedEffect(uiState.ipAddress) {
+        if (ipInput.isBlank()) ipInput = uiState.ipAddress
+    }
 
     PageContainer {
         SectionCard(
-            title = "Quick Send",
-            subtitle = "Send a message instantly to your Chatbox receiver."
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = { vm.sendMessage("Hello!") },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Hello!") }
-                OutlinedButton(
-                    onClick = { vm.sendMessage("Testing...") },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Testing") }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = {
-                        scope.launch { vm.sendMessage(vm.customMessage) }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(8.dp)); Text("Send") }
-
-                OutlinedButton(
-                    onClick = { vm.customMessage = "" },
-                    modifier = Modifier.weight(1f)
-                ) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(8.dp)); Text("Clear") }
-            }
-
-            OutlinedTextField(
-                value = vm.customMessage,
-                onValueChange = { vm.customMessage = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Message") },
-                singleLine = true
-            )
-        }
-
-        SectionCard(
             title = "Connection",
-            subtitle = "Configure your receiver connection."
+            subtitle = "Enter your headset IP then tap Apply."
         ) {
             OutlinedTextField(
-                value = vm.ip,
-                onValueChange = { vm.ip = it },
+                value = ipInput,
+                onValueChange = { ipInput = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("IP Address") },
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = vm.port.toString(),
-                onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.port = it }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Port") },
                 singleLine = true,
+                label = { Text("Headset IP address") },
+                placeholder = { Text("Example: 192.168.1.23") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            Button(
-                onClick = { vm.saveConnection() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Settings, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Save Connection")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.ipAddressApply(ipInput.trim()) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Apply") }
+
+                OutlinedButton(
+                    onClick = { ipInput = uiState.ipAddress },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Reset") }
+            }
+
+            Text(
+                text = "Current target: ${uiState.ipAddress}",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        SectionCard(
+            title = "Manual Send",
+            subtitle = "One-off message (doesn’t affect Cycle/Now Playing/AFK)."
+        ) {
+            OutlinedTextField(
+                value = vm.messageText.value,
+                onValueChange = { vm.onMessageTextChange(it) },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                label = { Text("Message") }
+            )
+            Button(onClick = { vm.sendMessage() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Send")
             }
         }
 
-        // NEW: permissions / keep-alive helpers (matches the style of your existing permission button)
         SectionCard(
             title = "Permissions & Background",
-            subtitle = "Open the exact system screens needed so VRC-A keeps working."
+            subtitle = "Open the system screens needed for Now Playing + background stability."
         ) {
+            val pkg = ctx.packageName
+            val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
+
+            val powerManager =
+                ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+            val ignoringBatteryOpt =
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    powerManager.isIgnoringBatteryOptimizations(pkg)
+                } else {
+                    true
+                }
+
             Text(
                 text = "Overlay permission: " + (if (overlayAllowed) "Allowed" else "Not allowed"),
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodySmall
             )
             Text(
                 text = "Battery optimisation: " +
                     (if (ignoringBatteryOpt) "Not optimised" else "Optimised (may be killed)"),
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodySmall
             )
 
             OutlinedButton(
@@ -285,7 +268,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                     val i = android.content.Intent(
                         android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         android.net.Uri.parse("package:$pkg")
-                    )
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(i)
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -309,7 +292,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                             android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                                 .setData(android.net.Uri.parse("package:$pkg"))
                         }
-                    ctx.startActivity(i)
+                    ctx.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Battery optimisation settings") }
@@ -318,6 +301,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 onClick = {
                     val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                         .setData(android.net.Uri.parse("package:$pkg"))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(i)
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -335,20 +319,20 @@ private fun CyclePage(vm: ChatboxViewModel) {
         // AFK
         // -------------------------
         SectionCard(
-            title = "AFK / Top Line",
-            subtitle = "AFK overrides everything else. Stop clears instantly."
+            title = "AFK (top line)",
+            subtitle = "AFK is always the top line. Forced interval. Stop clears it instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(text = "AFK enabled")
                 Switch(
                     checked = vm.afkEnabled,
-                    onCheckedChange = { vm.afkEnabled = it }
+                    onCheckedChange = { vm.setAfkEnabled(it) }
                 )
             }
 
             OutlinedTextField(
                 value = vm.afkMessage,
-                onValueChange = { vm.afkMessage = it },
+                onValueChange = { vm.setAfkMessage(it) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("AFK text") }
@@ -374,7 +358,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                 ) { Text("Load") }
 
                                 Button(
-                                    onClick = { scope.launch { vm.saveAfkPreset(slot, vm.afkMessage) } },
+                                    onClick = { scope.launch { vm.saveAfkPreset(slot) } },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Save") }
                             }
@@ -408,17 +392,16 @@ private fun CyclePage(vm: ChatboxViewModel) {
         // -------------------------
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "No more ‘press enter’. Add up to 10 lines. Stop clears instantly."
+            subtitle = "Add up to 10 lines. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(text = "Cycle enabled")
                 Switch(
                     checked = vm.cycleEnabled,
-                    onCheckedChange = { vm.cycleEnabled = it }
+                    onCheckedChange = { vm.setCycleEnabled(it) }
                 )
             }
 
-            // Editor
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (vm.cycleLines.isEmpty()) {
                     Text(
@@ -465,7 +448,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
+                    raw.toIntOrNull()?.let { vm.setCycleIntervalSeconds(it) }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -492,7 +475,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                 ) { Text("Load") }
 
                                 Button(
-                                    onClick = { scope.launch { vm.saveCyclePreset(slot, vm.cycleLines.toList()) } },
+                                    onClick = { scope.launch { vm.saveCyclePreset(slot) } },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Save") }
                             }
@@ -571,7 +554,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 
             Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
-            // Hard locked preset names (Love/Minimal/Crystal/Soundwave/Geometry)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
@@ -654,31 +636,17 @@ private fun DebugPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "OSC Output Preview",
-            subtitle = "Shows what each module is generating, plus the combined message."
+            title = "Logs (last 60)",
+            subtitle = "Quick view; full logs in logcat."
         ) {
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "AFK:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
-
-                    Text(text = "Cycle:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
-
-                    Text(text = "Music:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
-
-                    Text(text = "Combined:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
+            val logs = vm.debugLogs
+            if (logs.isEmpty()) {
+                Text("No logs yet.")
+            } else {
+                SelectionContainer {
+                    Text(logs.joinToString("\n"))
                 }
             }
-        }
-
-        SectionCard(
-            title = "VRChat send status",
-            subtitle = null
-        ) {
-            Text(text = "Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
@@ -721,11 +689,11 @@ TUTORIAL (Step by Step)
    Dashboard → Manual Send → type “hello” → Send
 
 6) Enable Now Playing:
-   Now Playing tab → Open Notification Access settings → enable VRC-A
+   Dashboard → Permissions & Background → Open Notification Access settings → enable VRC-A
    Then restart VRC-A and play music.
 
 7) Start Now Playing sender:
-   Toggle Enable Now Playing block → Start
+   Now Playing tab → Enable Now Playing block → Start
 
 8) Cycle:
    Cycle tab → Enable Cycle → Add up to 10 lines → Start
@@ -803,40 +771,10 @@ Progress not moving:
     }
 
     val fullDoc = remember {
-        // Full doc lives here now (no dependency on vm.fullInfoDocumentText)
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
 Base: ScrapW’s Chatbox base (heavily revamped)
-
-============================================================
-WHAT THIS APP IS
-============================================================
-VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
-It’s meant for standalone / mobile-friendly setups where you want:
-- A quick “Send message” tool
-- A cycling status / rotating messages system
-- A live “Now Playing” music block (from your phone’s media notifications)
-- An AFK tag at the very top
-
-VRC-A is designed to be “easy to test” with debug indicators so you can tell
-what’s failing (connection, permissions, detection, etc).
-
-============================================================
-IMPORTANT: VRChat OSC MUST BE ON
-============================================================
-VRChat → Settings → OSC → Enable OSC
-
-============================================================
-IP ADDRESS (HEADSET)
-============================================================
-Quest / Android headset:
-Settings → Wi-Fi → tap network → Advanced → IP Address
-Example: 192.168.1.23
-
-============================================================
-END
-============================================================
         """.trimIndent()
     }
 
@@ -882,14 +820,6 @@ END
                     fontFamily = FontFamily.Monospace
                 )
             }
-        }
-
-        SectionCard(title = "About") {
-            Text(
-                text = "VRC-A = VRChat Assistant\n" +
-                    "Made by Ashoska Mitsu Sisko\n" +
-                    "Based on ScrapW’s Chatbox base (heavily revamped)."
-            )
         }
     }
 }
