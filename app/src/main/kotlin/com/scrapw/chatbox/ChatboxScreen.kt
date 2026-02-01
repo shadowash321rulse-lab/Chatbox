@@ -50,7 +50,7 @@ private enum class InfoTab(val title: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatboxScreen(
-    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory)
+    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory),
 ) {
     var page by rememberSaveable { mutableStateOf(AppPage.Dashboard) }
 
@@ -175,6 +175,19 @@ private fun SectionCard(
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+
+    // Permission status (best-effort)
+    val pkg = ctx.packageName
+    val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
+    val powerManager =
+        ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+    val ignoringBatteryOpt =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            powerManager.isIgnoringBatteryOptimizations(pkg)
+        } else {
+            true
+        }
 
     PageContainer {
         SectionCard(
@@ -234,7 +247,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Port") },
                 singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
             Button(
@@ -246,77 +259,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 Text("Save Connection")
             }
         }
-    }
-}
 
-@Composable
-private fun CyclePage(vm: ChatboxViewModel) {
-    PageContainer {
+        // NEW: permissions / keep-alive helpers (matches the style of your existing permission button)
         SectionCard(
-            title = "Cycle Sender",
-            subtitle = "Cycles through messages at an interval."
+            title = "Permissions & Background",
+            subtitle = "Open the exact system screens needed so VRC-A keeps working."
         ) {
-            Text("This page is unchanged by the permissions work.")
-        }
-    }
-}
-
-@Composable
-private fun NowPlayingPage(vm: ChatboxViewModel) {
-    val ctx = LocalContext.current
-
-    // Animated preview (UI-only)
-    var previewT by remember { mutableStateOf(0f) }
-    LaunchedEffect(vm.spotifyPreset) {
-        previewT = 0f
-        while (true) {
-            previewT += 0.02f
-            if (previewT > 1f) previewT = 0f
-            kotlinx.coroutines.delay(120)
-        }
-    }
-
-    // Quick permission status + deep links
-    val pkg = ctx.packageName
-    val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
-    val powerManager =
-        ctx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-    val ignoringBatteryOpt =
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            powerManager.isIgnoringBatteryOptimizations(pkg)
-        } else {
-            true
-        }
-
-    PageContainer {
-        SectionCard(
-            title = "Now Playing (phone music)",
-            subtitle = "Uses Notification Access. Stop clears instantly."
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Enable Now Playing block")
-                Switch(
-                    checked = vm.spotifyEnabled,
-                    onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
-                )
-            }
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Demo mode (testing)")
-                Switch(
-                    checked = vm.spotifyDemoEnabled,
-                    onCheckedChange = { vm.setSpotifyDemoFlag(it) }
-                )
-            }
-
-            OutlinedButton(
-                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Open Notification Access settings") }
-
-            // NEW: buttons like the Notification Access one, to help keep the app working in background
-            Divider(Modifier.padding(vertical = 10.dp))
-
             Text(
                 text = "Overlay permission: " + (if (overlayAllowed) "Allowed" else "Not allowed"),
                 style = MaterialTheme.typography.bodyMedium
@@ -326,6 +274,11 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                     (if (ignoringBatteryOpt) "Not optimised" else "Optimised (may be killed)"),
                 style = MaterialTheme.typography.bodyMedium
             )
+
+            OutlinedButton(
+                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Notification Access settings") }
 
             OutlinedButton(
                 onClick = {
@@ -369,6 +322,241 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open App info (background restrictions)") }
+        }
+    }
+}
+
+@Composable
+private fun CyclePage(vm: ChatboxViewModel) {
+    val scope = rememberCoroutineScope()
+
+    PageContainer {
+        // -------------------------
+        // AFK
+        // -------------------------
+        SectionCard(
+            title = "AFK / Top Line",
+            subtitle = "AFK overrides everything else. Stop clears instantly."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(text = "AFK enabled")
+                Switch(
+                    checked = vm.afkEnabled,
+                    onCheckedChange = { vm.afkEnabled = it }
+                )
+            }
+
+            OutlinedTextField(
+                value = vm.afkMessage,
+                onValueChange = { vm.afkMessage = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("AFK text") }
+            )
+
+            Text(text = "AFK Presets (3):", style = MaterialTheme.typography.labelLarge)
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..3).forEach { slot ->
+                    ElevatedCard {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val preview = vm.getAfkPresetPreview(slot).ifBlank { "(empty)" }
+
+                            Text(
+                                text = "Preset $slot — $preview",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { scope.launch { vm.loadAfkPreset(slot) } },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Load") }
+
+                                Button(
+                                    onClick = { scope.launch { vm.saveAfkPreset(slot, vm.afkMessage) } },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Save") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.startAfkSender() },
+                    modifier = Modifier.weight(1f),
+                    enabled = vm.afkEnabled
+                ) { Text("Start") }
+
+                OutlinedButton(
+                    onClick = { vm.stopAfkSender(clearFromChatbox = true) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Stop") }
+            }
+
+            OutlinedButton(
+                onClick = { vm.sendAfkNow() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = vm.afkEnabled
+            ) { Text("Send once") }
+        }
+
+        // -------------------------
+        // Cycle
+        // -------------------------
+        SectionCard(
+            title = "Cycle Messages",
+            subtitle = "No more ‘press enter’. Add up to 10 lines. Stop clears instantly."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(text = "Cycle enabled")
+                Switch(
+                    checked = vm.cycleEnabled,
+                    onCheckedChange = { vm.cycleEnabled = it }
+                )
+            }
+
+            // Editor
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (vm.cycleLines.isEmpty()) {
+                    Text(
+                        text = "No lines yet. Tap Add Line.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                vm.cycleLines.forEachIndexed { idx, line ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = line,
+                            onValueChange = { vm.updateCycleLine(idx, it) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("Line ${idx + 1}") }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = { vm.removeCycleLine(idx) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Remove line")
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { vm.addCycleLine() },
+                        enabled = vm.cycleLines.size < 10,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add line (${vm.cycleLines.size}/10)")
+                    }
+
+                    OutlinedButton(
+                        onClick = { vm.clearCycleLines() },
+                        enabled = vm.cycleLines.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Clear") }
+                }
+            }
+
+            OutlinedTextField(
+                value = vm.cycleIntervalSeconds.toString(),
+                onValueChange = { raw ->
+                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Cycle speed (seconds) — min 2") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
+            Text(text = "Cycle Presets (5):", style = MaterialTheme.typography.labelLarge)
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..5).forEach { slot ->
+                    ElevatedCard {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val preview = vm.getCyclePresetPreview(slot).ifBlank { "(empty)" }
+                            Text(
+                                text = "Preset $slot — $preview",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { scope.launch { vm.loadCyclePreset(slot) } },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Load") }
+
+                                Button(
+                                    onClick = { scope.launch { vm.saveCyclePreset(slot, vm.cycleLines.toList()) } },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Save") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { vm.startCycle() },
+                    modifier = Modifier.weight(1f),
+                    enabled = vm.cycleEnabled && vm.cycleLines.any { it.trim().isNotEmpty() }
+                ) { Text("Start") }
+
+                OutlinedButton(
+                    onClick = { vm.stopCycle(clearFromChatbox = true) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Stop") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingPage(vm: ChatboxViewModel) {
+    val ctx = LocalContext.current
+
+    // Animated preview (UI-only)
+    var previewT by remember { mutableStateOf(0f) }
+    LaunchedEffect(vm.spotifyPreset) {
+        previewT = 0f
+        while (true) {
+            previewT += 0.02f
+            if (previewT > 1f) previewT = 0f
+            kotlinx.coroutines.delay(120)
+        }
+    }
+
+    PageContainer {
+        SectionCard(
+            title = "Now Playing (phone music)",
+            subtitle = "Uses Notification Access. Stop clears instantly."
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(text = "Enable Now Playing block")
+                Switch(
+                    checked = vm.spotifyEnabled,
+                    onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
+                )
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(text = "Demo mode (testing)")
+                Switch(
+                    checked = vm.spotifyDemoEnabled,
+                    onCheckedChange = { vm.setSpotifyDemoFlag(it) }
+                )
+            }
+
+            OutlinedButton(
+                onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open Notification Access settings") }
 
             OutlinedTextField(
                 value = vm.musicRefreshSeconds.toString(),
@@ -466,17 +654,31 @@ private fun DebugPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "Logs (last 60)",
-            subtitle = "Quick view; full logs in logcat."
+            title = "OSC Output Preview",
+            subtitle = "Shows what each module is generating, plus the combined message."
         ) {
-            val logs = vm.debugLogs
-            if (logs.isEmpty()) {
-                Text("No logs yet.")
-            } else {
-                SelectionContainer {
-                    Text(logs.joinToString("\n"))
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = "AFK:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Cycle:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Music:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Combined:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
                 }
             }
+        }
+
+        SectionCard(
+            title = "VRChat send status",
+            subtitle = null
+        ) {
+            Text(text = "Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
@@ -485,71 +687,209 @@ private fun DebugPage(vm: ChatboxViewModel) {
 private fun InfoPage(vm: ChatboxViewModel) {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
+    val overview = remember {
+        """
+VRC-A (VRChat Assistant)
+Made by: Ashoska Mitsu Sisko
+Base: ScrapW’s Chatbox base (heavily revamped)
+
+VRC-A sends text to VRChat’s Chatbox using OSC over your Wi-Fi network.
+It’s designed for standalone/mobile setups with debug indicators so you can
+quickly tell what’s failing (connection, permissions, detection).
+        """.trimIndent()
+    }
+
+    val tutorial = remember {
+        """
+TUTORIAL (Step by Step)
+
+1) Turn OSC ON in VRChat:
+   VRChat → Settings → OSC → Enable OSC
+
+2) Same Wi-Fi:
+   Your phone and headset MUST be on the same Wi-Fi network.
+
+3) Find your headset IP:
+   Quest / Android headset:
+   Settings → Wi-Fi → tap your network → Advanced → IP Address
+   Example: 192.168.1.23
+
+4) Put IP into VRC-A:
+   Dashboard → Headset IP address → Apply
+
+5) Test manual send:
+   Dashboard → Manual Send → type “hello” → Send
+
+6) Enable Now Playing:
+   Now Playing tab → Open Notification Access settings → enable VRC-A
+   Then restart VRC-A and play music.
+
+7) Start Now Playing sender:
+   Toggle Enable Now Playing block → Start
+
+8) Cycle:
+   Cycle tab → Enable Cycle → Add up to 10 lines → Start
+
+9) AFK:
+   Cycle tab → Enable AFK → type AFK text → Start
+        """.trimIndent()
+    }
+
+    val features = remember {
+        """
+FEATURES
+
+Connection / Manual Send
+- Set headset IP
+- Send one-off messages instantly
+
+AFK (Top Line)
+- AFK appears above Cycle + Music
+- Forced interval (no slider)
+- 3 saved presets (persist)
+
+Cycle
+- Up to 10 lines per cycle list
+- Min interval 2 seconds
+- 5 saved presets (persist)
+
+Now Playing
+- Reads phone media notifications (Notification Access)
+- Demo mode for testing
+- Independent refresh speed (min 2 seconds)
+- Hard locked progress presets:
+  Love / Minimal / Crystal / Soundwave / Geometry
+
+Debug
+- Listener status
+- Detected title/artist/app
+- Shows what AFK/Cycle/Music are generating + combined output
+        """.trimIndent()
+    }
+
+    val bugs = remember {
+        """
+KNOWN ISSUES / NOTES
+
+- Some music players do not provide continuous playback position updates.
+  In that case, the bar may update only when the player refreshes state.
+
+- If your router has “client isolation”, phone → headset OSC traffic can be blocked.
+
+- If nothing shows in VRChat:
+  - Check IP
+  - Ensure OSC is enabled in VRChat
+  - Same Wi-Fi
+        """.trimIndent()
+    }
+
+    val help = remember {
+        """
+QUICK TROUBLESHOOTING
+
+Nothing appears in VRChat:
+- Check headset IP
+- VRChat OSC enabled
+- Same Wi-Fi
+
+Now Playing blank:
+- Enable Notification Access
+- Restart app
+- Start playing music (must show media notification)
+
+Progress not moving:
+- Depends on player. Try a different music app to compare.
+        """.trimIndent()
+    }
+
+    val fullDoc = remember {
+        // Full doc lives here now (no dependency on vm.fullInfoDocumentText)
+        """
+VRC-A (VRChat Assistant)
+Made by: Ashoska Mitsu Sisko
+Base: ScrapW’s Chatbox base (heavily revamped)
+
+============================================================
+WHAT THIS APP IS
+============================================================
+VRC-A is an Android app that sends text to VRChat’s Chatbox using OSC.
+It’s meant for standalone / mobile-friendly setups where you want:
+- A quick “Send message” tool
+- A cycling status / rotating messages system
+- A live “Now Playing” music block (from your phone’s media notifications)
+- An AFK tag at the very top
+
+VRC-A is designed to be “easy to test” with debug indicators so you can tell
+what’s failing (connection, permissions, detection, etc).
+
+============================================================
+IMPORTANT: VRChat OSC MUST BE ON
+============================================================
+VRChat → Settings → OSC → Enable OSC
+
+============================================================
+IP ADDRESS (HEADSET)
+============================================================
+Quest / Android headset:
+Settings → Wi-Fi → tap network → Advanced → IP Address
+Example: 192.168.1.23
+
+============================================================
+END
+============================================================
+        """.trimIndent()
+    }
+
     PageContainer {
-        SectionCard(title = "Info Tabs") {
+        SectionCard(
+            title = "Information",
+            subtitle = "Everything about VRC-A (what it is, tutorial, features, and bugs)."
+        ) {
             Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 InfoTab.entries.forEach { t ->
-                    FilterChip(
-                        selected = tab == t,
+                    val selected = (t == tab)
+                    val colors = if (selected) ButtonDefaults.buttonColors()
+                    else ButtonDefaults.outlinedButtonColors()
+
+                    Button(
                         onClick = { tab = t },
-                        label = { Text(t.title) }
-                    )
+                        colors = colors,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(text = t.title)
+                    }
                 }
+            }
+
+            val text: String = when (tab) {
+                InfoTab.Overview -> overview
+                InfoTab.Tutorial -> tutorial
+                InfoTab.Features -> features
+                InfoTab.Bugs -> bugs
+                InfoTab.Troubleshoot -> help
+                InfoTab.FullDoc -> fullDoc
+            }
+
+            SelectionContainer {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace
+                )
             }
         }
 
-        when (tab) {
-            InfoTab.Overview -> OverviewTab(vm)
-            InfoTab.Tutorial -> TutorialTab(vm)
-            InfoTab.Features -> FeaturesTab(vm)
-            InfoTab.Bugs -> BugsTab(vm)
-            InfoTab.Troubleshoot -> TroubleshootTab(vm)
-            InfoTab.FullDoc -> FullDocTab(vm)
+        SectionCard(title = "About") {
+            Text(
+                text = "VRC-A = VRChat Assistant\n" +
+                    "Made by Ashoska Mitsu Sisko\n" +
+                    "Based on ScrapW’s Chatbox base (heavily revamped)."
+            )
         }
-    }
-}
-
-@Composable
-private fun OverviewTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Overview") {
-        Text("See README / docs in-app.")
-    }
-}
-
-@Composable
-private fun TutorialTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Tutorial") {
-        Text("Tutorial content here.")
-    }
-}
-
-@Composable
-private fun FeaturesTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Features") {
-        Text("Features list here.")
-    }
-}
-
-@Composable
-private fun BugsTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Bugs") {
-        Text("Known bugs here.")
-    }
-}
-
-@Composable
-private fun TroubleshootTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Help") {
-        Text("Troubleshooting here.")
-    }
-}
-
-@Composable
-private fun FullDocTab(vm: ChatboxViewModel) {
-    SectionCard(title = "Full Doc") {
-        SelectionContainer { Text("Full documentation here.") }
     }
 }
