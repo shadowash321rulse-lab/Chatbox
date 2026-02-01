@@ -24,7 +24,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
@@ -33,9 +32,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.scrapw.chatbox.ui.ChatboxViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.scrapw.chatbox.ui.ChatboxViewModel
 
 private enum class AppPage(val title: String) {
     Dashboard("Dashboard"),
@@ -64,8 +63,7 @@ fun ChatboxScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("VRC-A") }
-                // ✅ no random send button in header anymore
+                title = { Text("VRC-A") } // ✅ no random header send button
             )
         },
         bottomBar = { SlimBottomBar(current = page, onSelect = { page = it }) }
@@ -80,7 +78,7 @@ fun ChatboxScreen(
                 AppPage.Cycle -> CyclePage(chatboxViewModel)
                 AppPage.NowPlaying -> NowPlayingPage(chatboxViewModel)
                 AppPage.Debug -> DebugPage(chatboxViewModel)
-                AppPage.Info -> InfoPage(chatboxViewModel)
+                AppPage.Info -> InfoPage()
             }
         }
     }
@@ -173,10 +171,8 @@ private fun SectionCard(
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
-    val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
 
-    // ✅ IP uses TextFieldValue so cursor never jumps; allow dots
     var ipInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(uiState.ipAddress))
     }
@@ -184,7 +180,6 @@ private fun DashboardPage(vm: ChatboxViewModel) {
         if (ipInput.text.isBlank()) ipInput = TextFieldValue(uiState.ipAddress)
     }
 
-    // ✅ System sheet (small, noticeable, not a nav button)
     var showSystemSheet by remember { mutableStateOf(false) }
     if (showSystemSheet) {
         ModalBottomSheet(
@@ -201,7 +196,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 ElevatedCard {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            "These keep VRC-A working reliably (Now Playing, overlay staying alive, fewer kills by Android).",
+                            "These keep VRC-A reliable (Now Playing, overlays, fewer Android kills).",
                             style = MaterialTheme.typography.bodySmall
                         )
 
@@ -222,128 +217,125 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                     }
                 }
 
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
 
     PageContainer {
-        // ✅ Live preview / avatar + chat bubble + panic switch
+        // ✅ Higher VR preview
         SectionCard(
             title = "VRChat Preview",
-            subtitle = "Live preview of what will be shown in VRChat (combined output)."
+            subtitle = "Live preview of exactly what will appear in VRChat."
         ) {
             val previewText = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
 
-            ElevatedCard {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AssistChip(
+                    onClick = { showSystemSheet = true },
+                    label = { Text("System") },
+                    leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
+                )
+
+                // ✅ KILL button
+                Button(
+                    onClick = { vm.killStopAndClear() },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AssistChip(
-                            onClick = { showSystemSheet = true },
-                            label = { Text("System") },
-                            leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
-                        )
+                    Text("KILL", color = MaterialTheme.colorScheme.onError)
+                }
+            }
 
-                        // ✅ PANIC button: disables senders + clears VRChat chatbox
-                        Button(
-                            onClick = { vm.panicStopAndClear() },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Text("PANIC", color = MaterialTheme.colorScheme.onError)
-                        }
+            Spacer(Modifier.height(8.dp))
+
+            // Avatar + centered chat bubble (VRChat style: text sits centered vertically)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+            ) {
+                // Avatar silhouette
+                Canvas(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxHeight()
+                        .width(170.dp)
+                ) {
+                    val w = size.width
+                    val h = size.height
+
+                    // Head
+                    drawCircle(
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
+                        radius = w * 0.18f,
+                        center = Offset(w * 0.5f, h * 0.24f)
+                    )
+
+                    // Body
+                    val path = Path().apply {
+                        moveTo(w * 0.50f, h * 0.42f)
+                        cubicTo(w * 0.18f, h * 0.46f, w * 0.18f, h * 0.86f, w * 0.50f, h * 0.88f)
+                        cubicTo(w * 0.82f, h * 0.86f, w * 0.82f, h * 0.46f, w * 0.50f, h * 0.42f)
+                        close()
                     }
+                    drawPath(path, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f))
+                }
 
-                    // Avatar + bubble
+                // Chat bubble ABOVE head and text centered vertically
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 6.dp)
+                        .fillMaxWidth(),
+                    tonalElevation = 3.dp,
+                    shape = MaterialTheme.shapes.large
+                ) {
                     Box(
                         Modifier
-                            .fillMaxWidth()
-                            .height(240.dp)
+                            .heightIn(min = 96.dp)
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        // Simple avatar silhouette (placeholder)
-                        Canvas(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxHeight()
-                                .width(160.dp)
-                        ) {
-                            val w = size.width
-                            val h = size.height
-
-                            // Head
-                            drawCircle(
-                                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
-                                radius = w * 0.18f,
-                                center = Offset(w * 0.5f, h * 0.22f)
+                        SelectionContainer {
+                            Text(
+                                text = previewText,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodyMedium
                             )
-                            // Body
-                            val path = Path().apply {
-                                moveTo(w * 0.50f, h * 0.40f)
-                                cubicTo(w * 0.18f, h * 0.44f, w * 0.18f, h * 0.84f, w * 0.50f, h * 0.86f)
-                                cubicTo(w * 0.82f, h * 0.84f, w * 0.82f, h * 0.44f, w * 0.50f, h * 0.40f)
-                                close()
-                            }
-                            drawPath(
-                                path = path,
-                                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f)
-                            )
-                        }
-
-                        // Chat bubble above head
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 6.dp)
-                                .fillMaxWidth(),
-                            tonalElevation = 3.dp,
-                            shape = MaterialTheme.shapes.large
-                        ) {
-                            SelectionContainer {
-                                Text(
-                                    text = previewText,
-                                    modifier = Modifier.padding(12.dp),
-                                    fontFamily = FontFamily.Monospace,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
                         }
                     }
+                }
+            }
 
-                    // Quick toggles (only enable/disable here — details live in tabs)
-                    ElevatedCard {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Quick Toggles", style = MaterialTheme.typography.titleSmall)
+            // Quick toggles ONLY
+            ElevatedCard {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Quick Toggles", style = MaterialTheme.typography.titleSmall)
 
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("AFK")
-                                Switch(
-                                    checked = vm.afkEnabled,
-                                    onCheckedChange = { vm.setAfkEnabledFlag(it) }
-                                )
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Cycle")
-                                Switch(
-                                    checked = vm.cycleEnabled,
-                                    onCheckedChange = { vm.setCycleEnabledFlag(it) }
-                                )
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Now Playing")
-                                Switch(
-                                    checked = vm.spotifyEnabled,
-                                    onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
-                                )
-                            }
-                        }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("AFK")
+                        Switch(
+                            checked = vm.afkEnabled,
+                            onCheckedChange = { vm.setAfkEnabledFlag(it) }
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Cycle")
+                        Switch(
+                            checked = vm.cycleEnabled,
+                            onCheckedChange = { vm.setCycleEnabledFlag(it) }
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Now Playing")
+                        Switch(
+                            checked = vm.spotifyEnabled,
+                            onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
+                        )
                     }
                 }
             }
@@ -383,7 +375,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Manual Send",
-            subtitle = "One-off message (doesn’t affect Cycle/Now Playing/AFK)."
+            subtitle = "One-off message (doesn’t affect AFK/Cycle/Now Playing)."
         ) {
             OutlinedTextField(
                 value = vm.messageText.value,
@@ -442,10 +434,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
     PageContainer {
         SectionCard(
             title = "AFK (top line)",
-            subtitle = "AFK is always the top line. Forced interval. Stop clears it instantly."
+            subtitle = "AFK always appears above Cycle + Music."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "AFK enabled")
+                Text("AFK enabled")
                 Switch(
                     checked = vm.afkEnabled,
                     onCheckedChange = { vm.setAfkEnabledFlag(it) }
@@ -475,10 +467,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(text = "AFK Presets (3)", style = MaterialTheme.typography.titleSmall)
+                            Text("AFK Presets (3)", style = MaterialTheme.typography.titleSmall)
                             if (vm.afkPresetsCollapsed) {
                                 Text(
-                                    text = afkPresetsPreview(),
+                                    afkPresetsPreview(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -542,10 +534,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Add up to 10 lines. Stop clears instantly."
+            subtitle = "Up to 10 lines. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Cycle enabled")
+                Text("Cycle enabled")
                 Switch(
                     checked = vm.cycleEnabled,
                     onCheckedChange = { vm.setCycleEnabledFlag(it) }
@@ -623,10 +615,10 @@ private fun CyclePage(vm: ChatboxViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(text = "Cycle Presets (5)", style = MaterialTheme.typography.titleSmall)
+                            Text("Cycle Presets (5)", style = MaterialTheme.typography.titleSmall)
                             if (vm.cyclePresetsCollapsed) {
                                 Text(
-                                    text = cyclePresetsPreview(),
+                                    cyclePresetsPreview(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -696,7 +688,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
         if (refreshInput.text != target) refreshInput = TextFieldValue(target)
     }
 
-    // Animated preview uses time, but Soundwave itself is tied to song position when actually playing.
     var previewT by remember { mutableStateOf(0f) }
     LaunchedEffect(vm.spotifyPreset) {
         previewT = 0f
@@ -713,7 +704,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             subtitle = "Uses Notification Access. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Enable Now Playing block")
+                Text("Enable Now Playing block")
                 Switch(
                     checked = vm.spotifyEnabled,
                     onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
@@ -721,7 +712,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = "Demo mode (testing)")
+                Text("Demo mode (testing)")
                 Switch(
                     checked = vm.spotifyDemoEnabled,
                     onCheckedChange = { vm.setSpotifyDemoFlag(it) }
@@ -745,7 +736,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
+            Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
@@ -793,7 +784,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 ) { Text("Stop") }
             }
 
-            // ✅ Send once belongs here, not in the header
             OutlinedButton(
                 onClick = { vm.sendNowPlayingOnce() },
                 modifier = Modifier.fillMaxWidth(),
@@ -805,11 +795,11 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             title = "Detected / Preview",
             subtitle = "If blank: enable access, restart app, then play music."
         ) {
-            Text(text = "Detected: ${vm.nowPlayingDetected}")
-            Text(text = "Artist: ${vm.lastNowPlayingArtist}")
-            Text(text = "Title: ${vm.lastNowPlayingTitle}")
-            Text(text = "App: ${vm.activePackage}")
-            Text(text = "Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
+            Text("Detected: ${vm.nowPlayingDetected}")
+            Text("Artist: ${vm.lastNowPlayingArtist}")
+            Text("Title: ${vm.lastNowPlayingTitle}")
+            Text("App: ${vm.activePackage}")
+            Text("Status: ${if (vm.nowPlayingIsPlaying) "Playing" else "Paused"}")
         }
     }
 }
@@ -821,76 +811,66 @@ private fun DebugPage(vm: ChatboxViewModel) {
             title = "Listener",
             subtitle = "Confirms Notification Access + media detection."
         ) {
-            Text(text = "Listener connected: ${vm.listenerConnected}")
-            Text(text = "Active package: ${vm.activePackage}")
-            Text(text = "Detected: ${vm.nowPlayingDetected}")
-            Text(text = "Playing: ${vm.nowPlayingIsPlaying}")
+            Text("Listener connected: ${vm.listenerConnected}")
+            Text("Active package: ${vm.activePackage}")
+            Text("Detected: ${vm.nowPlayingDetected}")
+            Text("Playing: ${vm.nowPlayingIsPlaying}")
         }
 
         SectionCard(
             title = "OSC Output Preview",
-            subtitle = "Shows what each module is generating, plus the combined message."
+            subtitle = "Raw lines + combined output."
         ) {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "AFK:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
+                    Text("AFK:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Cycle:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
+                    Text("Cycle:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Music:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
+                    Text("Music:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
 
-                    Text(text = "Combined:", style = MaterialTheme.typography.labelLarge)
-                    Text(text = vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
+                    Text("Combined:", style = MaterialTheme.typography.labelLarge)
+                    Text(vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
                 }
             }
         }
 
         SectionCard(title = "VRChat send status") {
-            Text(text = "Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
+            Text("Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
 
 @Composable
-private fun InfoPage(vm: ChatboxViewModel) {
+private fun InfoPage() {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     val overview = remember {
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
-Base: ScrapW’s Chatbox base (heavily revamped)
 
-VRC-A sends text to VRChat’s Chatbox using OSC over Wi-Fi.
-Dashboard shows a live preview so you know exactly what will appear in VR.
+Dashboard shows a live VR-style preview so you always know what will appear in VRChat.
+Use KILL to instantly stop everything and clear the chatbox.
         """.trimIndent()
     }
 
     val tutorial = remember {
         """
-TUTORIAL (Step by Step)
+TUTORIAL
 
-1) Turn OSC ON in VRChat:
-   VRChat → Settings → OSC → Enable OSC
+1) VRChat → Settings → OSC → Enable OSC
+2) Phone + headset on same Wi-Fi
+3) Find headset IP (Wi-Fi → network → Advanced)
+4) Dashboard → Connection → Apply
+5) Manual Send to test
 
-2) Same Wi-Fi:
-   Phone and headset must be on the same network.
-
-3) Find headset IP:
-   Settings → Wi-Fi → (your network) → Advanced → IP Address
-
-4) Put IP into VRC-A:
-   Dashboard → Connection → Apply
-
-5) Test manual send:
-   Dashboard → Manual Send → “hello” → Send
-
-6) Now Playing:
-   Dashboard → System → Notification Access → enable VRC-A
-   Restart VRC-A, then play music.
+Now Playing:
+Dashboard → System → Notification Access → enable VRC-A
+Restart VRC-A, play music, then Now Playing → Start.
         """.trimIndent()
     }
 
@@ -898,56 +878,54 @@ TUTORIAL (Step by Step)
         """
 FEATURES
 
-- Live VR preview (combined output)
-- Panic button (stops + clears VRChat chatbox)
-- AFK (forced interval), 3 presets
-- Cycle (10 lines), 5 presets
+- Live VR preview (centered like VRChat)
+- KILL switch (stops + clears chatbox)
+- AFK + presets
+- Cycle + presets
 - Now Playing (Notification Access)
-- Persistent progress bar preset
-- Collapsible preset sections to reduce clutter
-- System sheet: Notification / Overlay / Battery optimization
+- Soundwave progress bar (pattern-based, not random)
+- System sheet (Notification / Overlay / Battery optimization)
         """.trimIndent()
     }
 
     val bugs = remember {
         """
-KNOWN NOTES
+NOTES
 
-- Some music players don’t provide continuous position updates.
-- Some routers block device-to-device traffic (client isolation).
+- Some media apps don’t provide smooth playback position updates.
+- Some routers block device-to-device traffic (“client isolation”).
         """.trimIndent()
     }
 
     val help = remember {
         """
-QUICK TROUBLESHOOTING
+TROUBLESHOOT
 
-Nothing in VRChat:
-- Check headset IP
+Nothing appears in VRChat:
+- Check IP
 - OSC enabled
 - Same Wi-Fi
 
 Now Playing blank:
 - Enable Notification Access
 - Restart app
-- Start playing music (media notification must exist)
+- Start playing music (notification must exist)
         """.trimIndent()
     }
 
     val fullDoc = remember {
         """
-VRC-A (VRChat Assistant)
-Made by: Ashoska Mitsu Sisko
+VRC-A
 
-Dashboard shows you exactly what will be sent to VRChat.
-Use PANIC if something is stuck sending—this stops and clears the chatbox.
+Dashboard is the control center.
+If anything gets stuck sending: press KILL (stops + clears VRChat).
         """.trimIndent()
     }
 
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "What it is, tutorial, features, and troubleshooting."
+            subtitle = "Overview, tutorial, features, and troubleshooting."
         ) {
             Row(
                 modifier = Modifier
@@ -964,11 +942,11 @@ Use PANIC if something is stuck sending—this stops and clears the chatbox.
                         onClick = { tab = t },
                         colors = colors,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) { Text(text = t.title) }
+                    ) { Text(t.title) }
                 }
             }
 
-            val text: String = when (tab) {
+            val text = when (tab) {
                 InfoTab.Overview -> overview
                 InfoTab.Tutorial -> tutorial
                 InfoTab.Features -> features
