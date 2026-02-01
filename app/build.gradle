@@ -12,17 +12,27 @@ if (keystorePropertiesFile.exists()){
 }
 
 /**
- * Fix for:
- *  - androidx.core:core-ktx:1.15.0 requires compileSdk 35
- *  - This project uses compileSdk 34 (AGP 8.2.2 max recommended 34)
+ * Fixes for CI/release:
  *
- * Some dependency in the graph is pulling core/core-ktx 1.15.0.
- * We force core/core-ktx to 1.13.1 (compatible with compileSdk 34).
+ * 1) androidx.core:core(-ktx):1.15.0 requires compileSdk 35
+ *    This project is compileSdk 34 (AGP 8.2.2 max recommended 34)
+ *    -> force core/core-ktx to 1.13.1
+ *
+ * 2) Kotlin stdlib 2.1.0 got pulled into the graph, but this project uses Kotlin 1.9.22
+ *    -> force kotlin-stdlib* and kotlin-reflect to 1.9.22
  */
 configurations.configureEach {
     resolutionStrategy {
+        // Keep AndroidX Core compatible with compileSdk 34
         force 'androidx.core:core:1.13.1'
         force 'androidx.core:core-ktx:1.13.1'
+
+        // Keep Kotlin artifacts compatible with Kotlin Gradle plugin 1.9.22
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22'
+        force 'org.jetbrains.kotlin:kotlin-reflect:1.9.22'
     }
 }
 
