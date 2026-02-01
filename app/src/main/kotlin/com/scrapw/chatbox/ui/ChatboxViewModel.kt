@@ -111,7 +111,7 @@ class ChatboxViewModel(
 
     private val remoteChatboxOSC = ChatboxOSC(
         ipAddress = runBlocking { userPreferencesRepository.ipAddress.first() },
-        port = 9000
+        port = runBlocking { userPreferencesRepository.port.first() }
     )
 
     private val localChatboxOSC = ChatboxOSC(
@@ -147,7 +147,7 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // hard-disable SFX (you requested removal)
+        // hard-disable SFX
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
@@ -224,7 +224,7 @@ class ChatboxViewModel(
     private var cycleJob: Job? = null
     private var cycleIndex = 0
 
-    // max 10 lines, edited directly by UI (no “press enter” system)
+    // max 10 lines
     val cycleLines = mutableStateListOf<String>()
 
     // =========================
@@ -233,26 +233,29 @@ class ChatboxViewModel(
     var spotifyEnabled by mutableStateOf(false)
     var spotifyDemoEnabled by mutableStateOf(false)
 
-    // ✅ now persisted
+    // persisted
     var spotifyPreset by mutableStateOf(1)
+        private set
 
     var musicRefreshSeconds by mutableStateOf(2)
     private var nowPlayingJob: Job? = null
 
     // =========================
-    // ✅ UI clutter controls (persisted, collapsed by default)
+    // UI clutter controls (persisted, collapsed by default)
+    // IMPORTANT: Do NOT name functions setXxx() here (JVM setter collision).
     // =========================
     var afkPresetsCollapsed by mutableStateOf(true)
         private set
+
     var cyclePresetsCollapsed by mutableStateOf(true)
         private set
 
-    fun setAfkPresetsCollapsed(value: Boolean) {
+    fun updateAfkPresetsCollapsed(value: Boolean) {
         afkPresetsCollapsed = value
         viewModelScope.launch { userPreferencesRepository.saveAfkPresetsCollapsed(value) }
     }
 
-    fun setCyclePresetsCollapsed(value: Boolean) {
+    fun updateCyclePresetsCollapsed(value: Boolean) {
         cyclePresetsCollapsed = value
         viewModelScope.launch { userPreferencesRepository.saveCyclePresetsCollapsed(value) }
     }
@@ -270,7 +273,6 @@ class ChatboxViewModel(
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
 
-    // Raw now playing snapshot parts
     private var nowPlayingDurationMs: Long = 0L
     private var nowPlayingPositionMs: Long = 0L
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
@@ -289,7 +291,7 @@ class ChatboxViewModel(
         private set
 
     // =========================
-    // ✅ Preset previews must be Compose state
+    // Preset previews as Compose state
     // =========================
     private val afkPresetTexts = mutableStateListOf("", "", "")
     private val cyclePresetMessages = mutableStateListOf("", "", "", "", "")
@@ -316,12 +318,12 @@ class ChatboxViewModel(
             }
         }
 
-        // ✅ AFK presets (3) into STATE list (recomposes immediately)
+        // AFK presets (3)
         viewModelScope.launch { userPreferencesRepository.afkPreset1.collect { afkPresetTexts[0] = it } }
         viewModelScope.launch { userPreferencesRepository.afkPreset2.collect { afkPresetTexts[1] = it } }
         viewModelScope.launch { userPreferencesRepository.afkPreset3.collect { afkPresetTexts[2] = it } }
 
-        // ✅ Cycle presets (5) into STATE list (recomposes immediately)
+        // Cycle presets (5)
         viewModelScope.launch { userPreferencesRepository.cyclePreset1Messages.collect { cyclePresetMessages[0] = it } }
         viewModelScope.launch { userPreferencesRepository.cyclePreset1Interval.collect { cyclePresetIntervals[0] = it.coerceAtLeast(2) } }
 
@@ -337,14 +339,14 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.cyclePreset5Messages.collect { cyclePresetMessages[4] = it } }
         viewModelScope.launch { userPreferencesRepository.cyclePreset5Interval.collect { cyclePresetIntervals[4] = it.coerceAtLeast(2) } }
 
-        // ✅ Now Playing preset persisted
+        // Now Playing preset persisted
         viewModelScope.launch {
             userPreferencesRepository.spotifyPreset.collect { saved ->
                 spotifyPreset = saved.coerceIn(1, 5)
             }
         }
 
-        // ✅ Collapsed state persisted (defaults true)
+        // Collapsed state persisted (defaults true)
         viewModelScope.launch {
             userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it }
         }
@@ -420,10 +422,11 @@ class ChatboxViewModel(
         rebuildAndMaybeSendCombined(forceSend = false)
     }
 
-    private fun persistCycleEnabled() = viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
-    private fun persistCycleInterval() = viewModelScope.launch {
-        userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2))
-    }
+    private fun persistCycleEnabled() =
+        viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(cycleEnabled) }
+
+    private fun persistCycleInterval() =
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds.coerceAtLeast(2)) }
 
     // =========================
     // Preset previews
@@ -452,9 +455,6 @@ class ChatboxViewModel(
         }
     }
 
-    /**
-     * UI-only animated preview (0f..1f). This does NOT affect sending.
-     */
     fun renderMusicPresetPreview(preset: Int, t: Float): String {
         val p = t.coerceIn(0f, 1f)
         val pos = (p * 1000f).toLong()
@@ -462,13 +462,11 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Preset load/save (NO “type after pressing” bug)
+    // Preset load/save
     // =========================
     suspend fun saveAfkPreset(slot: Int, text: String) {
         val s = slot.coerceIn(1, 3)
         val idx = s - 1
-
-        // ✅ update local state immediately (instant UI refresh)
         afkPresetTexts[idx] = text
 
         when (s) {
@@ -494,7 +492,6 @@ class ChatboxViewModel(
         val messages = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
         val interval = cycleIntervalSeconds.coerceAtLeast(2)
 
-        // ✅ update local state immediately (instant UI refresh)
         cyclePresetMessages[idx] = messages
         cyclePresetIntervals[idx] = interval
 
@@ -548,8 +545,8 @@ class ChatboxViewModel(
 
     fun updateSpotifyPreset(preset: Int) {
         val v = preset.coerceIn(1, 5)
-        spotifyPreset = v
         viewModelScope.launch { userPreferencesRepository.saveSpotifyPreset(v) }
+        spotifyPreset = v
         rebuildAndMaybeSendCombined(forceSend = true)
     }
 
@@ -733,9 +730,7 @@ class ChatboxViewModel(
         return listOf(line1, line2).filter { it.isNotBlank() }
     }
 
-    // =========================
-    // ✅ Geometry fills BEHIND dot
-    // =========================
+    // Geometry fills behind dot
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
@@ -766,17 +761,16 @@ class ChatboxViewModel(
             }
 
             4 -> { // Soundwave
-                val bg = charArrayOf('▁','▂','▃','▄','▅','▅','▄','▃','▂','▁')
+                val bg = charArrayOf('▁', '▂', '▃', '▄', '▅', '▅', '▄', '▃', '▂', '▁')
                 val idx = (p * (bg.size - 1)).toInt()
                 val out = bg.copyOf()
                 out[idx] = '●'
                 out.concatToString()
             }
 
-            else -> { // Geometry (fill behind dot)
+            else -> { // Geometry
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
-
                 val out = CharArray(slots) { i ->
                     when {
                         i < idx -> '▣'
