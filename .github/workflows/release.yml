@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK (debug)
 on:
   push:
     branches:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: "Build Release APK (use wrapper)"
+    name: "Build Debug APK (installable, no signing changes)"
     runs-on: ubuntu-latest
 
     steps:
@@ -23,16 +23,13 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      # IMPORTANT:
-      # Use the project's Gradle wrapper. Do NOT use "gradle-version: current".
-      # This avoids Gradle 9.x behavior that triggers AboutLibraries dependency mutation crashes.
-      - name: Build release APK
+      - name: Build debug APK (uses default debug signing)
         run: |
           ./gradlew --version
-          ./gradlew clean assembleRelease
+          ./gradlew clean assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: app/build/outputs/apk/release/*.apk
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
