@@ -71,9 +71,14 @@ class ChatboxViewModel(
     val conversationUiState = ConversationUiState()
     val messageText = mutableStateOf(TextFieldValue(""))
 
+    // draft cache for overlay
     var stashedMessage by mutableStateOf("")
         private set
 
+    /**
+     * ✅ Legacy API used by existing UI:
+     * "Stash" the current typed message into conversation (not sent).
+     */
     fun stashMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         osc.typing = false
@@ -83,10 +88,15 @@ class ChatboxViewModel(
             Message(txt, true, Instant.now())
         )
 
+        // Clear field after stashing (matches old behavior)
         messageText.value = TextFieldValue("", TextRange.Zero)
         stashedMessage = ""
     }
 
+    /**
+     * Optional helper: set a draft directly (used if you ever want "save draft" UX).
+     * Does NOT send, does NOT add to conversation.
+     */
     fun stashMessage(text: String) {
         stashedMessage = text
         messageText.value = TextFieldValue(text, TextRange(text.length))
@@ -152,6 +162,7 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.savePort(port) }
     }
 
+    // Older Settings/Options screens call these:
     fun onRealtimeMsgChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(value) }
     }
@@ -199,7 +210,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Throttling
+    // Throttling (hard floor)
     // =========================
     var minSendIntervalSeconds by mutableStateOf(2)
         private set
@@ -244,7 +255,7 @@ class ChatboxViewModel(
     private var nowPlayingJob: Job? = null
 
     // =========================
-    // UI clutter controls
+    // UI clutter controls (persisted)
     // =========================
     var afkPresetsCollapsed by mutableStateOf(true)
         private set
@@ -262,7 +273,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Debug / preview
+    // Debug fields shown in UI
     // =========================
     var listenerConnected by mutableStateOf(false)
     var activePackage by mutableStateOf("(none)")
@@ -288,10 +299,8 @@ class ChatboxViewModel(
     var debugLastCombinedOsc by mutableStateOf("")
         private set
 
-    // ✅ public: lets UI force preview refresh without sending
-    fun refreshPreview() {
-        rebuildCombinedPreviewOnly()
-    }
+    var combinedPreviewText by mutableStateOf("")
+        private set
 
     private val afkPresetTexts = mutableStateListOf("", "", "")
     private val cyclePresetMessages = mutableStateListOf("", "", "", "", "")
@@ -366,7 +375,6 @@ class ChatboxViewModel(
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingIsPlaying = s.isPlaying
 
-                // ✅ update preview even if user never presses Start
                 rebuildCombinedPreviewOnly()
             }
         }
@@ -399,11 +407,11 @@ class ChatboxViewModel(
     fun killStopAndClear(local: Boolean = false) {
         stopAll(clearFromChatbox = false)
         clearChatbox(local)
-        rebuildCombinedPreviewOnly()
+        rebuildCombinedPreviewOnly(forceClearIfAllOff = true)
     }
 
     // =========================
-    // Enable flags
+    // Enable flags (dashboard toggles)
     // =========================
     fun setAfkEnabledFlag(enabled: Boolean) {
         afkEnabled = enabled
@@ -437,7 +445,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // AFK
+    // AFK text update
     // =========================
     fun updateAfkText(text: String) {
         afkMessage = text
@@ -509,7 +517,6 @@ class ChatboxViewModel(
         else -> "Geometry"
     }
 
-    // ✅ used by NowPlaying preset list (UI animation tick passed in)
     fun renderMusicPresetPreview(preset: Int, t: Float): String {
         val p = t.coerceIn(0f, 1f)
         val pos = (p * 1000f).toLong()
@@ -584,7 +591,7 @@ class ChatboxViewModel(
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
-                delay(afkForcedIntervalSeconds * 1000L)
+                delay(12_000L)
             }
         }
     }
@@ -665,9 +672,10 @@ class ChatboxViewModel(
     // =========================
     // Combined builder + sender
     // =========================
-    private fun rebuildCombinedPreviewOnly() {
-        // ✅ always rebuild preview even if nothing is "started"
-        buildCombinedText(cycleLineOverride = null)
+    private fun rebuildCombinedPreviewOnly(forceClearIfAllOff: Boolean = false) {
+        val built = buildCombinedText(cycleLineOverride = null)
+        combinedPreviewText = built
+        if (forceClearIfAllOff && built.isBlank()) combinedPreviewText = ""
     }
 
     private fun rebuildAndMaybeSendCombined(
@@ -680,14 +688,16 @@ class ChatboxViewModel(
 
         if (forceClearIfAllOff && combined.isBlank()) {
             clearChatbox(local)
+            combinedPreviewText = ""
             return
         }
 
+        combinedPreviewText = combined
         if (!forceSend) return
         if (combined.isBlank()) return
 
         val nowMs = System.currentTimeMillis()
-        val minMs = minSendIntervalSeconds.coerceAtLeast(2) * 1000L
+        val minMs = 2_000L
         if (nowMs - lastCombinedSendMs < minMs) return
 
         sendToVrchatRaw(combined, local, addToConversation = false)
@@ -760,12 +770,14 @@ class ChatboxViewModel(
             durMs = max(1L, dur),
             isPlaying = nowPlayingIsPlaying
         )
+
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
+        val status = if (!nowPlayingIsPlaying) "Paused" else ""
 
-        val line2 = "$bar $time".trim()
-        val pausedLine = if (!nowPlayingIsPlaying) "Paused" else ""
+        val line2 = listOf(bar, time).joinToString(" ").trim()
+        val line3 = status.takeIf { it.isNotBlank() }
 
-        return listOf(line1, line2, pausedLine).filter { it.isNotBlank() }
+        return listOfNotNull(line1.takeIf { it.isNotBlank() }, line2.takeIf { it.isNotBlank() }, line3)
     }
 
     // =========================
@@ -783,6 +795,7 @@ class ChatboxViewModel(
                 inner[idx] = '◉'
                 "♡" + inner.concatToString() + "♡"
             }
+
             2 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
@@ -790,6 +803,7 @@ class ChatboxViewModel(
                 bg[idx] = '◉'
                 bg.concatToString()
             }
+
             3 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
@@ -797,7 +811,9 @@ class ChatboxViewModel(
                 bg[idx] = '◉'
                 bg.concatToString()
             }
+
             4 -> renderSoundwaveBar(p, posMs, isPlaying)
+
             else -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
