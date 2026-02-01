@@ -41,7 +41,6 @@ class ChatboxViewModel(
     companion object {
         private lateinit var instance: ChatboxViewModel
 
-        // OverlayService references this
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
 
@@ -72,14 +71,34 @@ class ChatboxViewModel(
     val conversationUiState = ConversationUiState()
     val messageText = mutableStateOf(TextFieldValue(""))
 
-    // Used by overlay/message-field to keep drafts without breaking old calls.
+    // draft cache for overlay
     var stashedMessage by mutableStateOf("")
         private set
 
-    // Older UI files call this. Keep it.
+    /**
+     * ✅ Legacy API used by existing UI:
+     * "Stash" the current typed message into conversation (not sent).
+     */
+    fun stashMessage(local: Boolean = false) {
+        val osc = if (!local) remoteChatboxOSC else localChatboxOSC
+        osc.typing = false
+
+        val txt = messageText.value.text
+        conversationUiState.addMessage(
+            Message(txt, true, Instant.now())
+        )
+
+        // Clear field after stashing (matches old behavior)
+        messageText.value = TextFieldValue("", TextRange.Zero)
+        stashedMessage = ""
+    }
+
+    /**
+     * Optional helper: set a draft directly (used if you ever want "save draft" UX).
+     * Does NOT send, does NOT add to conversation.
+     */
     fun stashMessage(text: String) {
         stashedMessage = text
-        // Also update the main message field so it stays in sync.
         messageText.value = TextFieldValue(text, TextRange(text.length))
     }
 
