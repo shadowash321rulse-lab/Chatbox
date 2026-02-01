@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
@@ -63,7 +64,7 @@ fun ChatboxScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("VRC-A") } // ✅ no random header send button
+                title = { Text("VRC-A") } // no header send button
             )
         },
         bottomBar = { SlimBottomBar(current = page, onSelect = { page = it }) }
@@ -167,6 +168,51 @@ private fun SectionCard(
     }
 }
 
+@Composable
+private fun VrChatBubble(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    // Keep bubble centered and prevent long lines (progress bars) from pushing it sideways.
+    // We render line-by-line and hard-disable wrapping on every line.
+    val lines = remember(text) { text.lines().ifEmpty { listOf("") } }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .wrapContentWidth(Alignment.CenterHorizontally),
+        tonalElevation = 3.dp,
+        shape = MaterialTheme.shapes.large
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = 520.dp) // clamps on tablets; on phone it's basically full width
+                .fillMaxWidth()
+                .heightIn(min = 104.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            SelectionContainer {
+                Column(
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    lines.forEach { line ->
+                        Text(
+                            text = line,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
@@ -182,9 +228,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
     var showSystemSheet by remember { mutableStateOf(false) }
     if (showSystemSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showSystemSheet = false }
-        ) {
+        ModalBottomSheet(onDismissRequest = { showSystemSheet = false }) {
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -194,7 +238,10 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 Text("System & Permissions", style = MaterialTheme.typography.titleMedium)
 
                 ElevatedCard {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         Text(
                             "These keep VRC-A reliable (Now Playing, overlays, fewer Android kills).",
                             style = MaterialTheme.typography.bodySmall
@@ -223,12 +270,11 @@ private fun DashboardPage(vm: ChatboxViewModel) {
     }
 
     PageContainer {
-        // ✅ Higher VR preview
         SectionCard(
             title = "VRChat Preview",
             subtitle = "Live preview of exactly what will appear in VRChat."
         ) {
-            val previewText = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
+            val previewText = vm.combinedPreviewText.ifBlank { "(nothing active)" }
 
             Row(
                 Modifier.fillMaxWidth(),
@@ -241,7 +287,6 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                     leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
                 )
 
-                // ✅ KILL button
                 Button(
                     onClick = { vm.killStopAndClear() },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -252,90 +297,75 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Avatar + centered chat bubble (VRChat style: text sits centered vertically)
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
+            // Use a Column to avoid the bubble covering the avatar head.
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Avatar silhouette
-                Canvas(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxHeight()
-                        .width(170.dp)
+                VrChatBubble(
+                    text = previewText,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Avatar silhouette (fully visible)
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    val w = size.width
-                    val h = size.height
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(170.dp)
+                    ) {
+                        val w = size.width
+                        val h = size.height
 
-                    // Head
-                    drawCircle(
-                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
-                        radius = w * 0.18f,
-                        center = Offset(w * 0.5f, h * 0.24f)
-                    )
+                        // Head
+                        drawCircle(
+                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
+                            radius = w * 0.18f,
+                            center = Offset(w * 0.5f, h * 0.22f)
+                        )
 
-                    // Body
-                    val path = Path().apply {
-                        moveTo(w * 0.50f, h * 0.42f)
-                        cubicTo(w * 0.18f, h * 0.46f, w * 0.18f, h * 0.86f, w * 0.50f, h * 0.88f)
-                        cubicTo(w * 0.82f, h * 0.86f, w * 0.82f, h * 0.46f, w * 0.50f, h * 0.42f)
-                        close()
+                        // Body
+                        val path = Path().apply {
+                            moveTo(w * 0.50f, h * 0.40f)
+                            cubicTo(w * 0.18f, h * 0.44f, w * 0.18f, h * 0.90f, w * 0.50f, h * 0.92f)
+                            cubicTo(w * 0.82f, h * 0.90f, w * 0.82f, h * 0.44f, w * 0.50f, h * 0.40f)
+                            close()
+                        }
+                        drawPath(path, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f))
                     }
-                    drawPath(path, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f))
                 }
 
-                // Chat bubble ABOVE head and text centered vertically
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 6.dp)
-                        .fillMaxWidth(),
-                    tonalElevation = 3.dp,
-                    shape = MaterialTheme.shapes.large
-                ) {
-                    Box(
-                        Modifier
-                            .heightIn(min = 96.dp)
-                            .padding(12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        SelectionContainer {
-                            Text(
-                                text = previewText,
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodyMedium
+                ElevatedCard {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Quick Toggles", style = MaterialTheme.typography.titleSmall)
+
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("AFK")
+                            Switch(
+                                checked = vm.afkEnabled,
+                                onCheckedChange = { vm.setAfkEnabledFlag(it) }
                             )
                         }
-                    }
-                }
-            }
-
-            // Quick toggles ONLY
-            ElevatedCard {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Quick Toggles", style = MaterialTheme.typography.titleSmall)
-
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("AFK")
-                        Switch(
-                            checked = vm.afkEnabled,
-                            onCheckedChange = { vm.setAfkEnabledFlag(it) }
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Cycle")
-                        Switch(
-                            checked = vm.cycleEnabled,
-                            onCheckedChange = { vm.setCycleEnabledFlag(it) }
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Now Playing")
-                        Switch(
-                            checked = vm.spotifyEnabled,
-                            onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
-                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Cycle")
+                            Switch(
+                                checked = vm.cycleEnabled,
+                                onCheckedChange = { vm.setCycleEnabledFlag(it) }
+                            )
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Now Playing")
+                            Switch(
+                                checked = vm.spotifyEnabled,
+                                onCheckedChange = { vm.setSpotifyEnabledFlag(it) }
+                            )
+                        }
                     }
                 }
             }
@@ -762,7 +792,10 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                                 Text(
                                     text = preview,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip
                                 )
                             }
                             if (selected) Text("Selected", style = MaterialTheme.typography.labelMedium)
@@ -883,7 +916,7 @@ FEATURES
 - AFK + presets
 - Cycle + presets
 - Now Playing (Notification Access)
-- Soundwave progress bar (pattern-based, not random)
+- Soundwave progress bar (10-pattern bank, scroll animation)
 - System sheet (Notification / Overlay / Battery optimization)
         """.trimIndent()
     }
