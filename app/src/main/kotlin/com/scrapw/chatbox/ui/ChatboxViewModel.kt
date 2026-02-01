@@ -71,14 +71,9 @@ class ChatboxViewModel(
     val conversationUiState = ConversationUiState()
     val messageText = mutableStateOf(TextFieldValue(""))
 
-    // draft cache for overlay
     var stashedMessage by mutableStateOf("")
         private set
 
-    /**
-     * ✅ Legacy API used by existing UI:
-     * "Stash" the current typed message into conversation (not sent).
-     */
     fun stashMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
         osc.typing = false
@@ -88,15 +83,10 @@ class ChatboxViewModel(
             Message(txt, true, Instant.now())
         )
 
-        // Clear field after stashing (matches old behavior)
         messageText.value = TextFieldValue("", TextRange.Zero)
         stashedMessage = ""
     }
 
-    /**
-     * Optional helper: set a draft directly (used if you ever want "save draft" UX).
-     * Does NOT send, does NOT add to conversation.
-     */
     fun stashMessage(text: String) {
         stashedMessage = text
         messageText.value = TextFieldValue(text, TextRange(text.length))
@@ -162,7 +152,6 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.savePort(port) }
     }
 
-    // Older Settings/Options screens call these:
     fun onRealtimeMsgChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(value) }
     }
@@ -788,7 +777,7 @@ class ChatboxViewModel(
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> {
+            1 -> { // Love (10 chars total)
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -796,7 +785,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> {
+            2 -> { // Minimal (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -804,7 +793,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> {
+            3 -> { // Crystal (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -812,9 +801,9 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            4 -> renderSoundwaveBar(p, posMs, isPlaying)
+            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ now 10 chars total
 
-            else -> {
+            else -> { // Geometry (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -829,6 +818,7 @@ class ChatboxViewModel(
         }
     }
 
+    // Patterns are longer than slots; we phase-sample them.
     private val soundwavePatterns: List<IntArray> = listOf(
         intArrayOf(6, 3, 6, 4, 7, 3, 6, 4, 7, 4, 6, 3),
         intArrayOf(7, 4, 6, 3, 7, 5, 6, 3, 7, 4, 6, 5),
@@ -842,10 +832,16 @@ class ChatboxViewModel(
         intArrayOf(7, 4, 6, 7, 3, 5, 7, 4, 6, 7, 3, 5)
     )
 
-    private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5)
+    // paused: less flat, still alive
+    private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
+    /**
+     * ✅ EXACT LENGTH = 10 chars total:
+     * - 8 wave chars
+     * - plus "[" and "]" around the progress index → +2
+     */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
-        val slots = 12
+        val slots = 8
         val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
 
         val patternIndex = if (isPlaying) {
@@ -853,14 +849,14 @@ class ChatboxViewModel(
         } else -1
 
         val base = if (patternIndex >= 0) soundwavePatterns[patternIndex] else soundwavePaused
-        val phase = if (isPlaying) ((posMs / 180L) % slots).toInt() else ((posMs / 900L) % slots).toInt()
+        val phase = if (isPlaying) ((posMs / 180L) % base.size).toInt() else ((posMs / 900L) % base.size).toInt()
 
         val chars = CharArray(slots) { i ->
             val amp = base[(i + phase) % base.size].coerceIn(1, 8)
             ampToChar(amp)
         }
 
-        val out = StringBuilder(slots + 2)
+        val out = StringBuilder(10)
         for (i in 0 until slots) {
             if (i == idx) out.append('[')
             out.append(chars[i])
