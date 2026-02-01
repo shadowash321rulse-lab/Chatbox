@@ -74,21 +74,7 @@ android {
 }
 
 aboutLibraries {
-    // Keep generating the library definitions resources (your build depends on it)
     configPath = "config"
-
-    // Critical: prevent the collector task that triggers
-    // "Cannot mutate the dependencies of configuration ':app:releaseCompileClasspath' after the configuration was resolved."
-    // This disables dependency collection logic that mutates resolved configurations.
-    collectDependencies = false
-}
-
-afterEvaluate {
-    // Safety belt: even if something still wires it in, do not run it.
-    // (Task exists because plugin creates it)
-    tasks.matching { it.name == "collectDependencies" }.configureEach {
-        enabled = false
-    }
 }
 
 dependencies {
