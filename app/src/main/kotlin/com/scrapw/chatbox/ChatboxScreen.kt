@@ -144,7 +144,7 @@ private fun PageContainer(content: @Composable ColumnScope.() -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(12.dp),
+            .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         content = content
     )
@@ -156,16 +156,14 @@ private fun SectionCard(
     subtitle: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    ElevatedCard {
         Column(
-            modifier = Modifier.padding(12.dp),
+            Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(text = title, style = MaterialTheme.typography.titleMedium)
             if (!subtitle.isNullOrBlank()) {
-                Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall)
             }
             content()
         }
@@ -175,7 +173,6 @@ private fun SectionCard(
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
-
     val ctx = LocalContext.current
 
     var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
@@ -232,9 +229,10 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             }
         }
 
+        // ✅ NEW: permission helpers on Dashboard
         SectionCard(
             title = "Permissions & Background",
-            subtitle = "Open the system screens needed for Now Playing + background stability."
+            subtitle = "Open system screens needed for Now Playing + keeping the app alive."
         ) {
             val pkg = ctx.packageName
             val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
@@ -244,9 +242,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             val ignoringBatteryOpt =
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                     powerManager.isIgnoringBatteryOptimizations(pkg)
-                } else {
-                    true
-                }
+                } else true
 
             Text(
                 text = "Overlay permission: " + (if (overlayAllowed) "Allowed" else "Not allowed"),
@@ -315,9 +311,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
     PageContainer {
-        // -------------------------
-        // AFK
-        // -------------------------
         SectionCard(
             title = "AFK (top line)",
             subtitle = "AFK is always the top line. Forced interval. Stop clears it instantly."
@@ -326,13 +319,13 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 Text(text = "AFK enabled")
                 Switch(
                     checked = vm.afkEnabled,
-                    onCheckedChange = { vm.setAfkEnabled(it) }
+                    onCheckedChange = { vm.afkEnabled = it }
                 )
             }
 
             OutlinedTextField(
                 value = vm.afkMessage,
-                onValueChange = { vm.setAfkMessage(it) },
+                onValueChange = { vm.updateAfkText(it) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text("AFK text") }
@@ -358,7 +351,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                 ) { Text("Load") }
 
                                 Button(
-                                    onClick = { scope.launch { vm.saveAfkPreset(slot) } },
+                                    onClick = { scope.launch { vm.saveAfkPreset(slot, vm.afkMessage) } },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Save") }
                             }
@@ -387,18 +380,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
             ) { Text("Send once") }
         }
 
-        // -------------------------
-        // Cycle
-        // -------------------------
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Add up to 10 lines. Stop clears instantly."
+            subtitle = "No more ‘press enter’. Add up to 10 lines. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(text = "Cycle enabled")
                 Switch(
                     checked = vm.cycleEnabled,
-                    onCheckedChange = { vm.setCycleEnabled(it) }
+                    onCheckedChange = { vm.cycleEnabled = it }
                 )
             }
 
@@ -448,7 +438,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
             OutlinedTextField(
                 value = vm.cycleIntervalSeconds.toString(),
                 onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.setCycleIntervalSeconds(it) }
+                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -475,7 +465,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
                                 ) { Text("Load") }
 
                                 Button(
-                                    onClick = { scope.launch { vm.saveCyclePreset(slot) } },
+                                    onClick = { scope.launch { vm.saveCyclePreset(slot, vm.cycleLines.toList()) } },
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Save") }
                             }
@@ -504,7 +494,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
 private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
 
-    // Animated preview (UI-only)
     var previewT by remember { mutableStateOf(0f) }
     LaunchedEffect(vm.spotifyPreset) {
         previewT = 0f
@@ -636,17 +625,31 @@ private fun DebugPage(vm: ChatboxViewModel) {
         }
 
         SectionCard(
-            title = "Logs (last 60)",
-            subtitle = "Quick view; full logs in logcat."
+            title = "OSC Output Preview",
+            subtitle = "Shows what each module is generating, plus the combined message."
         ) {
-            val logs = vm.debugLogs
-            if (logs.isEmpty()) {
-                Text("No logs yet.")
-            } else {
-                SelectionContainer {
-                    Text(logs.joinToString("\n"))
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = "AFK:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastAfkOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Cycle:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastCycleOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Music:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastMusicOsc, fontFamily = FontFamily.Monospace)
+
+                    Text(text = "Combined:", style = MaterialTheme.typography.labelLarge)
+                    Text(text = vm.debugLastCombinedOsc, fontFamily = FontFamily.Monospace)
                 }
             }
+        }
+
+        SectionCard(
+            title = "VRChat send status",
+            subtitle = null
+        ) {
+            Text(text = "Last sent to VRChat (ms): ${vm.lastSentToVrchatAtMs}")
         }
     }
 }
@@ -693,7 +696,7 @@ TUTORIAL (Step by Step)
    Then restart VRC-A and play music.
 
 7) Start Now Playing sender:
-   Now Playing tab → Enable Now Playing block → Start
+   Toggle Enable Now Playing block → Start
 
 8) Cycle:
    Cycle tab → Enable Cycle → Add up to 10 lines → Start
