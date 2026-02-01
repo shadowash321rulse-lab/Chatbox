@@ -34,15 +34,17 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }
 
     buildFeatures {
         compose true
+        buildConfig true
     }
 
-    // ✅ Compose compiler that matches Kotlin 1.9.24
+    // ✅ Compose compiler compatible with Kotlin 1.9.24
     composeOptions {
         kotlinCompilerExtensionVersion "1.5.14"
     }
@@ -55,19 +57,51 @@ android {
 }
 
 dependencies {
+    // -------------------------
+    // Compose + Material3
+    // -------------------------
     implementation platform("androidx.compose:compose-bom:2024.06.00")
     implementation "androidx.compose.ui:ui"
     implementation "androidx.compose.ui:ui-tooling-preview"
-    implementation "androidx.compose.material3:material3"
     debugImplementation "androidx.compose.ui:ui-tooling"
-
+    implementation "androidx.compose.material3:material3"
+    implementation "androidx.activity:activity-compose:1.9.1"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.4"
     implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4"
-    implementation "androidx.activity:activity-compose:1.9.1"
 
+    // ✅ Fixes ALL the missing icons: BugReport/MusicNote/Sync/Web/OpenInNew/etc
+    implementation "androidx.compose.material:material-icons-extended"
+
+    // -------------------------
+    // Coroutines
+    // -------------------------
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
 
+    // -------------------------
+    // DataStore
+    // -------------------------
     implementation "androidx.datastore:datastore-preferences:1.1.1"
 
+    // -------------------------
+    // OSC (JavaOSC)
+    // -------------------------
     implementation "com.illposed.osc:javaosc-core:0.8"
+
+    // -------------------------
+    // Retrofit + Gson (fixes CheckUpdate.kt)
+    // -------------------------
+    implementation "com.squareup.retrofit2:retrofit:2.11.0"
+    implementation "com.squareup.retrofit2:converter-gson:2.11.0"
+    implementation "com.google.code.gson:gson:2.11.0"
+
+    // -------------------------
+    // AboutLibraries (fixes DependenciesScreen)
+    // -------------------------
+    implementation "com.mikepenz:aboutlibraries-compose-m3:11.2.3"
+
+    // -------------------------
+    // Alorma compose-settings (fixes com/alorma/compose/settings/ui/* missing storage/state)
+    // -------------------------
+    implementation "com.github.alorma:compose-settings-storage-preferences:1.0.4"
+    implementation "com.github.alorma:compose-settings-ui-m3:1.0.4"
 }
