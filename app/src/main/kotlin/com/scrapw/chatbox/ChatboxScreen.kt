@@ -255,35 +255,14 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
+            // ✅ Fix 1: avatar head can’t clip (avatar is pushed down + fixed height)
+            // ✅ Fix 2: bubble stays centered; long lines scroll horizontally (no layout shove)
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(260.dp)
+                    .height(280.dp)
             ) {
-                Canvas(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxHeight()
-                        .width(170.dp)
-                ) {
-                    val w = size.width
-                    val h = size.height
-
-                    drawCircle(
-                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
-                        radius = w * 0.18f,
-                        center = Offset(w * 0.5f, h * 0.24f)
-                    )
-
-                    val path = Path().apply {
-                        moveTo(w * 0.50f, h * 0.42f)
-                        cubicTo(w * 0.18f, h * 0.46f, w * 0.18f, h * 0.86f, w * 0.50f, h * 0.88f)
-                        cubicTo(w * 0.82f, h * 0.86f, w * 0.82f, h * 0.46f, w * 0.50f, h * 0.42f)
-                        close()
-                    }
-                    drawPath(path, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f))
-                }
-
+                // Chat bubble ABOVE head
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -298,14 +277,47 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                             .padding(12.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        val hScroll = rememberScrollState()
                         SelectionContainer {
                             Text(
                                 text = previewText,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(hScroll),
                                 fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodyMedium,
+                                softWrap = false // critical: prevents “bar wraps then shifts stuff”
                             )
                         }
                     }
+                }
+
+                // Avatar silhouette (lowered so bubble never hides the head)
+                Canvas(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 8.dp)
+                        .height(200.dp)
+                        .width(170.dp)
+                ) {
+                    val w = size.width
+                    val h = size.height
+
+                    // Head (now always visible)
+                    drawCircle(
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
+                        radius = w * 0.18f,
+                        center = Offset(w * 0.5f, h * 0.20f)
+                    )
+
+                    // Body
+                    val path = Path().apply {
+                        moveTo(w * 0.50f, h * 0.36f)
+                        cubicTo(w * 0.18f, h * 0.40f, w * 0.18f, h * 0.96f, w * 0.50f, h * 0.98f)
+                        cubicTo(w * 0.82f, h * 0.96f, w * 0.82f, h * 0.40f, w * 0.50f, h * 0.36f)
+                        close()
+                    }
+                    drawPath(path, color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f))
                 }
             }
 
