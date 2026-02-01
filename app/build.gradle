@@ -48,6 +48,7 @@ android {
             }
         }
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -73,11 +74,25 @@ android {
 }
 
 aboutLibraries {
+    // Keep generating the library definitions resources (your build depends on it)
     configPath = "config"
+
+    // Critical: prevent the collector task that triggers
+    // "Cannot mutate the dependencies of configuration ':app:releaseCompileClasspath' after the configuration was resolved."
+    // This disables dependency collection logic that mutates resolved configurations.
+    collectDependencies = false
+}
+
+afterEvaluate {
+    // Safety belt: even if something still wires it in, do not run it.
+    // (Task exists because plugin creates it)
+    tasks.matching { it.name == "collectDependencies" }.configureEach {
+        enabled = false
+    }
 }
 
 dependencies {
-    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation platform('androidx.compose:compose-bom:2024.01.00')
@@ -95,7 +110,6 @@ dependencies {
 
     implementation 'com.illposed.osc:javaosc-core:0.7'
 
-//    implementation 'com.github.alorma:compose-settings-ui-m3:1.0.3'
     implementation 'com.github.alorma:compose-settings-storage-base:1.0.3'
     implementation 'com.github.alorma:compose-settings-storage-datastore:0.27.0'
 
