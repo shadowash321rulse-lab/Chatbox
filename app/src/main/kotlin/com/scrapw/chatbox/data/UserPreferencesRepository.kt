@@ -57,16 +57,12 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_PRESET_5_MESSAGES = stringPreferencesKey("cycle_preset_5_messages")
         val CYCLE_PRESET_5_INTERVAL = intPreferencesKey("cycle_preset_5_interval")
 
-        // ----------------------------
-        // ✅ NEW: Now Playing preset persistence
-        // ----------------------------
+        // --- Now Playing preset (persisted) ---
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
 
-        // ----------------------------
-        // ✅ NEW: UI clutter controls (collapsed by default)
-        // ----------------------------
-        val AFK_PRESETS_COLLAPSED = booleanPreferencesKey("ui_afk_presets_collapsed")
-        val CYCLE_PRESETS_COLLAPSED = booleanPreferencesKey("ui_cycle_presets_collapsed")
+        // --- UI collapse state (persisted) ---
+        val AFK_PRESETS_COLLAPSED = booleanPreferencesKey("afk_presets_collapsed")
+        val CYCLE_PRESETS_COLLAPSED = booleanPreferencesKey("cycle_presets_collapsed")
     }
 
     // ----------------------------
@@ -168,13 +164,13 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
     }
 
     // ----------------------------
-    // ✅ Now Playing preset persistence
+    // Now Playing preset (persisted)
     // ----------------------------
     val spotifyPreset = get(SPOTIFY_PRESET, 1)
     suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value.coerceIn(1, 5))
 
     // ----------------------------
-    // ✅ UI collapsed state persistence
+    // UI collapse state (persisted)
     // ----------------------------
     val afkPresetsCollapsed = get(AFK_PRESETS_COLLAPSED, true)
     suspend fun saveAfkPresetsCollapsed(value: Boolean) = save(AFK_PRESETS_COLLAPSED, value)
