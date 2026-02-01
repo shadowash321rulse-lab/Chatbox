@@ -23,18 +23,13 @@ fun OverlayDaemon(context: Context) {
     // Not a daemon at all...
 
     val state = SettingsStates.overlayState()
-
     val firstTime = remember { mutableStateOf(true) }
 
     if (firstTime.value && !Settings.canDrawOverlays(context)) {
         Log.d("Service", "No permission at start up, cancel.")
         state.value = false
     } else {
-        if (state.value) {
-            StartOverlay(context)
-        } else {
-            StopOverlay(context)
-        }
+        if (state.value) StartOverlay(context) else StopOverlay(context)
     }
 
     LaunchedEffect(Unit) {
@@ -50,7 +45,6 @@ private fun StartOverlay(context: Context) {
 
     val startForResult =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
-//            if (result.resultCode == Activity.RESULT_OK) {
             if (Settings.canDrawOverlays(context)) {
                 Log.d("Overlay Permission", "Permission granted")
                 context.startService(Intent(context, OverlayService::class.java))
@@ -71,7 +65,6 @@ private fun StartOverlay(context: Context) {
 @Composable
 private fun StopOverlay(context: Context) {
     Log.d("Service", "stopOverlay")
-
     context.stopService(Intent(context, OverlayService::class.java))
 }
 
@@ -80,16 +73,10 @@ private fun CheckOverlayPermission(
     context: Context,
     result: ManagedActivityResultLauncher<Intent, ActivityResult>
 ) {
-
-    val CODE_DRAW_OVER_OTHER_APP_PERMISSION = 2084
-
-
     if (!Settings.canDrawOverlays(context)) {
-        //If the draw over permission is not available open the settings screen
-        //to grant the permission.
         val intent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$context.packageName")
+            Uri.parse("package:${context.packageName}")
         )
 
         val toast = Toast.makeText(
@@ -102,6 +89,5 @@ private fun CheckOverlayPermission(
             toast.show()
             result.launch(intent)
         }
-
     }
 }
