@@ -8,7 +8,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -18,7 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
+import kotlinx.coroutines.launch
 
 private enum class AppPage(val title: String) {
     Dashboard("Dashboard"),
@@ -39,8 +49,9 @@ private enum class InfoTab(val title: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatboxScreen(vm: ChatboxViewModel) {
-
+fun ChatboxScreen(
+    chatboxViewModel: ChatboxViewModel = viewModel(factory = ChatboxViewModel.Factory)
+) {
     var page by rememberSaveable { mutableStateOf(AppPage.Dashboard) }
 
     Scaffold(
@@ -48,50 +59,82 @@ fun ChatboxScreen(vm: ChatboxViewModel) {
             CenterAlignedTopAppBar(
                 title = { Text("VRC-A") },
                 actions = {
-                    IconButton(onClick = { page = AppPage.Info }) {
-                        Icon(Icons.Default.Info, contentDescription = "Info")
+                    if (page == AppPage.NowPlaying) {
+                        IconButton(onClick = { chatboxViewModel.sendNowPlayingOnce() }) {
+                            Icon(Icons.Filled.Send, contentDescription = "Send now playing once")
+                        }
                     }
                 }
             )
         },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = page == AppPage.Dashboard,
-                    onClick = { page = AppPage.Dashboard },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                    label = { Text("Dash") }
-                )
-                NavigationBarItem(
-                    selected = page == AppPage.Cycle,
-                    onClick = { page = AppPage.Cycle },
-                    icon = { Icon(Icons.Default.Sync, contentDescription = "Cycle") },
-                    label = { Text("Cycle") }
-                )
-                NavigationBarItem(
-                    selected = page == AppPage.NowPlaying,
-                    onClick = { page = AppPage.NowPlaying },
-                    icon = { Icon(Icons.Default.MusicNote, contentDescription = "Now Playing") },
-                    label = { Text("Music") }
-                )
-                NavigationBarItem(
-                    selected = page == AppPage.Debug,
-                    onClick = { page = AppPage.Debug },
-                    icon = { Icon(Icons.Default.BugReport, contentDescription = "Debug") },
-                    label = { Text("Debug") }
-                )
-            }
+            SlimBottomBar(current = page, onSelect = { page = it })
         }
     ) { padding ->
-        Surface(Modifier.padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
             when (page) {
-                AppPage.Dashboard -> DashboardPage(vm)
-                AppPage.Cycle -> CyclePage(vm)
-                AppPage.NowPlaying -> NowPlayingPage(vm)
-                AppPage.Debug -> DebugPage(vm)
-                AppPage.Info -> InfoPage()
+                AppPage.Dashboard -> DashboardPage(chatboxViewModel)
+                AppPage.Cycle -> CyclePage(chatboxViewModel)
+                AppPage.NowPlaying -> NowPlayingPage(chatboxViewModel)
+                AppPage.Debug -> DebugPage(chatboxViewModel)
+                AppPage.Info -> InfoPage(chatboxViewModel)
             }
         }
+    }
+}
+
+@Composable
+private fun SlimBottomBar(
+    current: AppPage,
+    onSelect: (AppPage) -> Unit
+) {
+    Surface(tonalElevation = 3.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomTab(AppPage.Dashboard, current, Icons.Filled.Home, onSelect)
+            BottomTab(AppPage.Cycle, current, Icons.Filled.Sync, onSelect)
+            BottomTab(AppPage.NowPlaying, current, Icons.Filled.MusicNote, onSelect)
+            BottomTab(AppPage.Debug, current, Icons.Filled.BugReport, onSelect)
+            BottomTab(AppPage.Info, current, Icons.Filled.Info, onSelect)
+        }
+    }
+}
+
+@Composable
+private fun BottomTab(
+    page: AppPage,
+    current: AppPage,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onSelect: (AppPage) -> Unit
+) {
+    val selected = page == current
+    val contentColor =
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        Modifier
+            .widthIn(min = 64.dp)
+            .clickable { onSelect(page) }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = page.title, tint = contentColor)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = page.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            maxLines = 1
+        )
     }
 }
 
@@ -131,6 +174,8 @@ private fun SectionCard(
 
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
+    val scope = rememberCoroutineScope()
+
     PageContainer {
         SectionCard(
             title = "Quick Send",
@@ -149,22 +194,16 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
-                    onClick = { vm.sendMessage(vm.customMessage) },
+                    onClick = {
+                        scope.launch { vm.sendMessage(vm.customMessage) }
+                    },
                     modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Send, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Send")
-                }
+                ) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(8.dp)); Text("Send") }
 
                 OutlinedButton(
                     onClick = { vm.customMessage = "" },
                     modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Delete, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Clear")
-                }
+                ) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(8.dp)); Text("Clear") }
             }
 
             OutlinedTextField(
@@ -195,7 +234,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Port") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
             Button(
@@ -237,7 +276,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
         }
     }
 
-    // Status helpers for the permission buttons
+    // Quick permission status + deep links
     val pkg = ctx.packageName
     val overlayAllowed = android.provider.Settings.canDrawOverlays(ctx)
     val powerManager =
@@ -275,7 +314,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Notification Access settings") }
 
-            // NEW: quick permission links (like the Notification Access button)
+            // NEW: buttons like the Notification Access one, to help keep the app working in background
             Divider(Modifier.padding(vertical = 10.dp))
 
             Text(
@@ -344,6 +383,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 
             Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
+            // Hard locked preset names (Love/Minimal/Crystal/Soundwave/Geometry)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
@@ -416,16 +456,33 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 private fun DebugPage(vm: ChatboxViewModel) {
     PageContainer {
         SectionCard(
-            title = "Debug",
-            subtitle = "Debug tools and quick actions."
+            title = "Listener",
+            subtitle = "Confirms Notification Access + media detection."
         ) {
-            Text("This page is unchanged by the permissions work.")
+            Text(text = "Listener connected: ${vm.listenerConnected}")
+            Text(text = "Active package: ${vm.activePackage}")
+            Text(text = "Detected: ${vm.nowPlayingDetected}")
+            Text(text = "Playing: ${vm.nowPlayingIsPlaying}")
+        }
+
+        SectionCard(
+            title = "Logs (last 60)",
+            subtitle = "Quick view; full logs in logcat."
+        ) {
+            val logs = vm.debugLogs
+            if (logs.isEmpty()) {
+                Text("No logs yet.")
+            } else {
+                SelectionContainer {
+                    Text(logs.joinToString("\n"))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun InfoPage() {
+private fun InfoPage(vm: ChatboxViewModel) {
     var tab by rememberSaveable { mutableStateOf(InfoTab.Overview) }
 
     PageContainer {
@@ -445,12 +502,54 @@ private fun InfoPage() {
         }
 
         when (tab) {
-            InfoTab.Overview -> SectionCard("Overview") { Text("See README / docs in-app.") }
-            InfoTab.Tutorial -> SectionCard("Tutorial") { Text("Tutorial content here.") }
-            InfoTab.Features -> SectionCard("Features") { Text("Features list here.") }
-            InfoTab.Bugs -> SectionCard("Bugs") { Text("Known bugs here.") }
-            InfoTab.Troubleshoot -> SectionCard("Help") { Text("Troubleshooting here.") }
-            InfoTab.FullDoc -> SectionCard("Full Doc") { SelectionContainer { Text("Full documentation here.") } }
+            InfoTab.Overview -> OverviewTab(vm)
+            InfoTab.Tutorial -> TutorialTab(vm)
+            InfoTab.Features -> FeaturesTab(vm)
+            InfoTab.Bugs -> BugsTab(vm)
+            InfoTab.Troubleshoot -> TroubleshootTab(vm)
+            InfoTab.FullDoc -> FullDocTab(vm)
         }
+    }
+}
+
+@Composable
+private fun OverviewTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Overview") {
+        Text("See README / docs in-app.")
+    }
+}
+
+@Composable
+private fun TutorialTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Tutorial") {
+        Text("Tutorial content here.")
+    }
+}
+
+@Composable
+private fun FeaturesTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Features") {
+        Text("Features list here.")
+    }
+}
+
+@Composable
+private fun BugsTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Bugs") {
+        Text("Known bugs here.")
+    }
+}
+
+@Composable
+private fun TroubleshootTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Help") {
+        Text("Troubleshooting here.")
+    }
+}
+
+@Composable
+private fun FullDocTab(vm: ChatboxViewModel) {
+    SectionCard(title = "Full Doc") {
+        SelectionContainer { Text("Full documentation here.") }
     }
 }
