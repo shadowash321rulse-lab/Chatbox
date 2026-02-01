@@ -1,5 +1,10 @@
 package com.scrapw.chatbox
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -175,6 +180,7 @@ private fun SectionCard(
 
 @Composable
 private fun DashboardPage(vm: ChatboxViewModel) {
+    val ctx = LocalContext.current
     val uiState by vm.messengerUiState.collectAsState()
 
     // ✅ use TextFieldValue so cursor never jumps, and allow dots (KeyboardType.Text)
@@ -185,6 +191,51 @@ private fun DashboardPage(vm: ChatboxViewModel) {
     LaunchedEffect(uiState.ipAddress) {
         if (ipInput.text.isBlank()) {
             ipInput = TextFieldValue(uiState.ipAddress)
+        }
+    }
+
+    // --- Permission status helpers ---
+    val overlayAllowed = remember {
+        mutableStateOf(Settings.canDrawOverlays(ctx))
+    }
+    val batteryIgnored = remember {
+        val pm = ctx.getSystemService(PowerManager::class.java)
+        mutableStateOf(pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true)
+    }
+
+    fun refreshPermissionStatus() {
+        overlayAllowed.value = Settings.canDrawOverlays(ctx)
+        val pm = ctx.getSystemService(PowerManager::class.java)
+        batteryIgnored.value = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+    }
+
+    fun openOverlaySettings() {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:${ctx.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    }
+
+    fun requestIgnoreBatteryOptimizations() {
+        // Preferred: direct request screen for this app
+        val direct = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${ctx.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        // Fallback: general battery optimization screen
+        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        try {
+            ctx.startActivity(direct)
+        } catch (_: Exception) {
+            try {
+                ctx.startActivity(fallback)
+            } catch (_: Exception) {
+                // nothing else we can do
+            }
         }
     }
 
@@ -218,6 +269,53 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             Text(
                 text = "Current target: ${uiState.ipAddress}",
                 style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        // ✅ New: Permissions / Keep Alive
+        SectionCard(
+            title = "Permissions / Keep Alive",
+            subtitle = "Helps Now Playing work + prevents Android killing the app."
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        ctx.startActivity(vm.notificationAccessIntent())
+                        refreshPermissionStatus()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Notification Access") }
+
+                OutlinedButton(
+                    onClick = {
+                        openOverlaySettings()
+                        refreshPermissionStatus()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Overlay") }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    requestIgnoreBatteryOptimizations()
+                    refreshPermissionStatus()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Disable battery optimization") }
+
+            val overlayText = if (overlayAllowed.value) "Overlay: Enabled" else "Overlay: Off"
+            val batteryText = if (batteryIgnored.value) "Battery optimization: Disabled" else "Battery optimization: On"
+
+            Text(
+                text = "$overlayText  •  $batteryText",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text(
+                text = "Tip: Battery optimization is the big one for staying alive in background.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -277,8 +375,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
         syncCycleLineFieldsFromVm()
     }
     LaunchedEffect(vm.cycleLines.toList()) {
-        // If VM changes due to preset load etc, update field text without breaking cursor mid-edit too much.
-        // (If user is actively editing, VM will usually match anyway.)
         syncCycleLineFieldsFromVm()
     }
 
@@ -474,7 +570,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 value = cycleIntervalInput,
                 onValueChange = { v ->
                     cycleIntervalInput = v
-                    // allow empty while typing; only apply when valid
                     v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -629,7 +724,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
 
             Text(text = "Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
-            // Hard locked preset names (Love/Minimal/Crystal/Soundwave/Geometry)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
