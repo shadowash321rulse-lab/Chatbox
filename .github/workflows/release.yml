@@ -43,7 +43,7 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: "34.0.0"
 
-      - run: mv ${{steps.sign_app.outputs.signedReleaseFile}} Chatbox_$GITHUB_REF_NAME.apk
+      - run: mv ${{ steps.sign_app.outputs.signedReleaseFile }} Chatbox_${GITHUB_REF_NAME}.apk
 
       - name: Release
         uses: softprops/action-gh-release@v0.1.15
