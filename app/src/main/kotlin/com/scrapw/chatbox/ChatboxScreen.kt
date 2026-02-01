@@ -11,11 +11,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,9 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private enum class AppPage(val title: String) {
@@ -174,9 +177,15 @@ private fun SectionCard(
 private fun DashboardPage(vm: ChatboxViewModel) {
     val uiState by vm.messengerUiState.collectAsState()
 
-    var ipInput by rememberSaveable { mutableStateOf(uiState.ipAddress) }
+    // ✅ use TextFieldValue so cursor never jumps, and allow dots (KeyboardType.Text)
+    var ipInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(uiState.ipAddress))
+    }
+
     LaunchedEffect(uiState.ipAddress) {
-        if (ipInput.isBlank()) ipInput = uiState.ipAddress
+        if (ipInput.text.isBlank()) {
+            ipInput = TextFieldValue(uiState.ipAddress)
+        }
     }
 
     PageContainer {
@@ -191,17 +200,17 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 singleLine = true,
                 label = { Text("Headset IP address") },
                 placeholder = { Text("Example: 192.168.1.23") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
-                    onClick = { vm.ipAddressApply(ipInput.trim()) },
+                    onClick = { vm.ipAddressApply(ipInput.text.trim()) },
                     modifier = Modifier.weight(1f)
                 ) { Text("Apply") }
 
                 OutlinedButton(
-                    onClick = { ipInput = uiState.ipAddress },
+                    onClick = { ipInput = TextFieldValue(uiState.ipAddress) },
                     modifier = Modifier.weight(1f)
                 ) { Text("Reset") }
             }
@@ -234,6 +243,61 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
+    // ✅ Fix cursor-jump for numeric interval input (Cycle)
+    var cycleIntervalInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(vm.cycleIntervalSeconds.toString()))
+    }
+    LaunchedEffect(vm.cycleIntervalSeconds) {
+        // only update if different (prevents fighting the user)
+        val target = vm.cycleIntervalSeconds.toString()
+        if (cycleIntervalInput.text != target) {
+            cycleIntervalInput = TextFieldValue(target)
+        }
+    }
+
+    // ✅ Fix cursor-jump for cycle lines by keeping TextFieldValue per-row
+    val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
+
+    fun syncCycleLineFieldsFromVm() {
+        // Drop keys no longer valid
+        val validKeys = vm.cycleLines.indices.toSet()
+        cycleLineFields.keys.toList().forEach { k ->
+            if (k !in validKeys) cycleLineFields.remove(k)
+        }
+        // Ensure each line has a field
+        vm.cycleLines.forEachIndexed { idx, text ->
+            val existing = cycleLineFields[idx]
+            if (existing == null || existing.text != text) {
+                cycleLineFields[idx] = TextFieldValue(text)
+            }
+        }
+    }
+
+    LaunchedEffect(vm.cycleLines.size) {
+        syncCycleLineFieldsFromVm()
+    }
+    LaunchedEffect(vm.cycleLines.toList()) {
+        // If VM changes due to preset load etc, update field text without breaking cursor mid-edit too much.
+        // (If user is actively editing, VM will usually match anyway.)
+        syncCycleLineFieldsFromVm()
+    }
+
+    fun afkPresetsPreview(): String {
+        val parts = (1..3).map { slot ->
+            val p = vm.getAfkPresetPreview(slot).ifBlank { "empty" }
+            "${slot}:${p}"
+        }
+        return parts.joinToString("  •  ").take(80).let { if (it.length >= 80) it.take(79) + "…" else it }
+    }
+
+    fun cyclePresetsPreview(): String {
+        val parts = (1..5).map { slot ->
+            val p = vm.getCyclePresetPreview(slot).ifBlank { "empty" }
+            "${slot}:${p}"
+        }
+        return parts.joinToString("  •  ").take(80).let { if (it.length >= 80) it.take(79) + "…" else it }
+    }
+
     PageContainer {
         // -------------------------
         // AFK
@@ -258,29 +322,65 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 label = { Text("AFK text") }
             )
 
-            Text(text = "AFK Presets (3):", style = MaterialTheme.typography.labelLarge)
+            // ✅ Collapsible presets block
+            ElevatedCard {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { vm.setAfkPresetsCollapsed(!vm.afkPresetsCollapsed) },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text = "AFK Presets (3)", style = MaterialTheme.typography.titleSmall)
+                            if (vm.afkPresetsCollapsed) {
+                                Text(
+                                    text = afkPresetsPreview(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (vm.afkPresetsCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                            contentDescription = null
+                        )
+                    }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..3).forEach { slot ->
-                    ElevatedCard {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val preview = vm.getAfkPresetPreview(slot).ifBlank { "(empty)" }
+                    if (!vm.afkPresetsCollapsed) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (1..3).forEach { slot ->
+                                ElevatedCard {
+                                    Column(
+                                        Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val preview = vm.getAfkPresetPreview(slot).ifBlank { "(empty)" }
 
-                            Text(
-                                text = "Preset $slot — $preview",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                                        Text(
+                                            text = "Preset $slot — $preview",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { scope.launch { vm.loadAfkPreset(slot) } },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Load") }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(
+                                                onClick = { scope.launch { vm.loadAfkPreset(slot) } },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("Load") }
 
-                                Button(
-                                    onClick = { scope.launch { vm.saveAfkPreset(slot, vm.afkMessage) } },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Save") }
+                                            Button(
+                                                onClick = { scope.launch { vm.saveAfkPreset(slot, vm.afkMessage) } },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("Save") }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -331,11 +431,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
                     )
                 }
 
-                vm.cycleLines.forEachIndexed { idx, line ->
+                vm.cycleLines.forEachIndexed { idx, _ ->
+                    val fieldValue = cycleLineFields[idx] ?: TextFieldValue(vm.cycleLines.getOrNull(idx).orEmpty())
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
-                            value = line,
-                            onValueChange = { vm.updateCycleLine(idx, it) },
+                            value = fieldValue,
+                            onValueChange = { newValue ->
+                                cycleLineFields[idx] = newValue
+                                vm.updateCycleLine(idx, newValue.text)
+                            },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             label = { Text("Line ${idx + 1}") }
@@ -367,9 +471,11 @@ private fun CyclePage(vm: ChatboxViewModel) {
             }
 
             OutlinedTextField(
-                value = vm.cycleIntervalSeconds.toString(),
-                onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
+                value = cycleIntervalInput,
+                onValueChange = { v ->
+                    cycleIntervalInput = v
+                    // allow empty while typing; only apply when valid
+                    v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -377,28 +483,64 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
 
-            Text(text = "Cycle Presets (5):", style = MaterialTheme.typography.labelLarge)
+            // ✅ Collapsible presets block
+            ElevatedCard {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { vm.setCyclePresetsCollapsed(!vm.cyclePresetsCollapsed) },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text = "Cycle Presets (5)", style = MaterialTheme.typography.titleSmall)
+                            if (vm.cyclePresetsCollapsed) {
+                                Text(
+                                    text = cyclePresetsPreview(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = if (vm.cyclePresetsCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                            contentDescription = null
+                        )
+                    }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..5).forEach { slot ->
-                    ElevatedCard {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val preview = vm.getCyclePresetPreview(slot).ifBlank { "(empty)" }
-                            Text(
-                                text = "Preset $slot — $preview",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                    if (!vm.cyclePresetsCollapsed) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (1..5).forEach { slot ->
+                                ElevatedCard {
+                                    Column(
+                                        Modifier.padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val preview = vm.getCyclePresetPreview(slot).ifBlank { "(empty)" }
+                                        Text(
+                                            text = "Preset $slot — $preview",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { scope.launch { vm.loadCyclePreset(slot) } },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Load") }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(
+                                                onClick = { scope.launch { vm.loadCyclePreset(slot) } },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("Load") }
 
-                                Button(
-                                    onClick = { scope.launch { vm.saveCyclePreset(slot, vm.cycleLines.toList()) } },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Save") }
+                                            Button(
+                                                onClick = { scope.launch { vm.saveCyclePreset(slot, vm.cycleLines.toList()) } },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("Save") }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -425,6 +567,17 @@ private fun CyclePage(vm: ChatboxViewModel) {
 private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
 
+    // ✅ Fix cursor-jump for numeric refresh input (Music)
+    var refreshInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(vm.musicRefreshSeconds.toString()))
+    }
+    LaunchedEffect(vm.musicRefreshSeconds) {
+        val target = vm.musicRefreshSeconds.toString()
+        if (refreshInput.text != target) {
+            refreshInput = TextFieldValue(target)
+        }
+    }
+
     // Animated preview (UI-only)
     var previewT by remember { mutableStateOf(0f) }
     LaunchedEffect(vm.spotifyPreset) {
@@ -432,7 +585,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
         while (true) {
             previewT += 0.02f
             if (previewT > 1f) previewT = 0f
-            kotlinx.coroutines.delay(120)
+            delay(120)
         }
     }
 
@@ -463,9 +616,10 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             ) { Text("Open Notification Access settings") }
 
             OutlinedTextField(
-                value = vm.musicRefreshSeconds.toString(),
-                onValueChange = { raw ->
-                    raw.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
+                value = refreshInput,
+                onValueChange = { v ->
+                    refreshInput = v
+                    v.text.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -707,7 +861,6 @@ Progress not moving:
     }
 
     val fullDoc = remember {
-        // Full doc lives here now (no dependency on vm.fullInfoDocumentText)
         """
 VRC-A (VRChat Assistant)
 Made by: Ashoska Mitsu Sisko
