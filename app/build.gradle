@@ -11,6 +11,21 @@ if (keystorePropertiesFile.exists()){
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+/**
+ * Fix for:
+ *  - androidx.core:core-ktx:1.15.0 requires compileSdk 35
+ *  - This project uses compileSdk 34 (AGP 8.2.2 max recommended 34)
+ *
+ * Some dependency in the graph is pulling core/core-ktx 1.15.0.
+ * We force core/core-ktx to 1.13.1 (compatible with compileSdk 34).
+ */
+configurations.configureEach {
+    resolutionStrategy {
+        force 'androidx.core:core:1.13.1'
+        force 'androidx.core:core-ktx:1.13.1'
+    }
+}
+
 android {
     signingConfigs {
         debug {
@@ -77,7 +92,7 @@ aboutLibraries {
 }
 
 dependencies {
-    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation platform('androidx.compose:compose-bom:2024.01.00')
