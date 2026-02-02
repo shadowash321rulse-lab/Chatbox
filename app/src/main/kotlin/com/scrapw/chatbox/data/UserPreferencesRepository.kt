@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
@@ -56,10 +57,10 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         val CYCLE_PRESET_5_MESSAGES = stringPreferencesKey("cycle_preset_5_messages")
         val CYCLE_PRESET_5_INTERVAL = intPreferencesKey("cycle_preset_5_interval")
 
-        // NEW: music preset persisted
+        // Music preset persisted
         val SPOTIFY_PRESET = intPreferencesKey("spotify_preset")
 
-        // NEW: UI collapse persisted
+        // UI collapse persisted
         val AFK_PRESETS_COLLAPSED = booleanPreferencesKey("afk_presets_collapsed")
         val CYCLE_PRESETS_COLLAPSED = booleanPreferencesKey("cycle_presets_collapsed")
     }
@@ -152,11 +153,11 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    // NEW: Spotify preset
+    // Spotify preset
     val spotifyPreset = get(SPOTIFY_PRESET, 1)
     suspend fun saveSpotifyPreset(value: Int) = save(SPOTIFY_PRESET, value)
 
-    // NEW: collapsed state
+    // collapsed state
     val afkPresetsCollapsed = get(AFK_PRESETS_COLLAPSED, true)
     suspend fun saveAfkPresetsCollapsed(value: Boolean) = save(AFK_PRESETS_COLLAPSED, value)
 
@@ -175,6 +176,8 @@ class UserPreferencesRepository(private val dataStore: DataStore<Preferences>) {
                 }
             }
             .map { prefs -> prefs[key] ?: defaultValue }
+            // ✅ Prevent redundant emissions that can cause cursor/selection glitches in Compose
+            .distinctUntilChanged()
     }
 
     private suspend fun <T> save(key: Preferences.Key<T>, value: T) {
