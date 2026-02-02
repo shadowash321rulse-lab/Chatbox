@@ -55,7 +55,7 @@ class ChatboxViewModel(
 
         @MainThread
         fun getInstance(): ChatboxViewModel {
-            if (!::instance.isInitialized) throw IllegalStateException("ChatboxViewModel is not initialized!")
+            if (!::instance.isInitialized) throw Exception("ChatboxViewModel is not initialized!")
             return instance
         }
     }
@@ -71,15 +71,13 @@ class ChatboxViewModel(
     val conversationUiState = ConversationUiState()
     val messageText = mutableStateOf(TextFieldValue(""))
 
-    /**
-     * Holds what the user typed so overlays can restore it cleanly.
-     */
+    // used by overlay + main UI
     var stashedMessage by mutableStateOf("")
         private set
 
     /**
-     * Old app code calls stashMessage(local:Boolean) to "save" the current typed message.
-     * We keep this signature for compatibility.
+     * Stash the current messageText into conversation as a stashed item.
+     * (kept for backwards compatibility with overlay/UI)
      */
     fun stashMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
@@ -92,11 +90,11 @@ class ChatboxViewModel(
 
         messageText.value = TextFieldValue("", TextRange.Zero)
         stashedMessage = ""
-        rebuildCombinedPreviewOnly()
     }
 
     /**
-     * Overlays call stashMessage(text:String) to populate the input field with a preset/stash.
+     * Set the stash buffer and move cursor to end.
+     * (kept because some UI calls stashMessage(text))
      */
     fun stashMessage(text: String) {
         stashedMessage = text
@@ -163,18 +161,22 @@ class ChatboxViewModel(
         viewModelScope.launch { userPreferencesRepository.savePort(port) }
     }
 
-    // Keep these signatures (other screens reference them)
-    fun onRealtimeMsgChanged(value: Boolean) =
+    // These are referenced by Settings / overlay options
+    fun onRealtimeMsgChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveIsRealtimeMsg(value) }
+    }
 
-    fun onTriggerSfxChanged(value: Boolean) =
+    fun onTriggerSfxChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveIsTriggerSFX(value) }
+    }
 
-    fun onTypingIndicatorChanged(value: Boolean) =
+    fun onTypingIndicatorChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveTypingIndicator(value) }
+    }
 
-    fun onSendImmediatelyChanged(value: Boolean) =
+    fun onSendImmediatelyChanged(value: Boolean) {
         viewModelScope.launch { userPreferencesRepository.saveIsSendImmediately(value) }
+    }
 
     fun onMessageTextChange(message: TextFieldValue, local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
@@ -191,7 +193,6 @@ class ChatboxViewModel(
     fun sendMessage(local: Boolean = false) {
         val osc = if (!local) remoteChatboxOSC else localChatboxOSC
 
-        // hard-disable SFX (your request)
         osc.sendMessage(
             messageText.value.text,
             messengerUiState.value.isSendImmediately,
@@ -205,7 +206,6 @@ class ChatboxViewModel(
 
         messageText.value = TextFieldValue("", TextRange.Zero)
         stashedMessage = ""
-        rebuildCombinedPreviewOnly()
     }
 
     // =========================
@@ -234,6 +234,7 @@ class ChatboxViewModel(
     var cycleEnabled by mutableStateOf(false)
         private set
 
+    // UI directly edits this (textbox), so keep setter public
     var cycleIntervalSeconds by mutableStateOf(3)
 
     private var cycleJob: Job? = null
@@ -254,7 +255,9 @@ class ChatboxViewModel(
     var spotifyPreset by mutableStateOf(1)
         private set
 
+    // UI directly edits this (textbox), so keep setter public
     var musicRefreshSeconds by mutableStateOf(2)
+
     private var nowPlayingJob: Job? = null
 
     // =========================
@@ -294,6 +297,7 @@ class ChatboxViewModel(
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
 
+    // For UI debug panels + dashboard preview
     var debugLastAfkOsc by mutableStateOf("")
         private set
     var debugLastCycleOsc by mutableStateOf("")
@@ -303,14 +307,13 @@ class ChatboxViewModel(
     var debugLastCombinedOsc by mutableStateOf("")
         private set
 
-    /**
-     * ✅ This is what the Dashboard bubble should display.
-     * It updates on ANY relevant state change, even when we aren't actively sending.
-     */
+    // Optional dedicated preview state (handy later)
     var combinedPreviewText by mutableStateOf("")
         private set
 
-    // Preset previews must be Compose state
+    // =========================
+    // Preset previews storage
+    // =========================
     private val afkPresetTexts = mutableStateListOf("", "", "")
     private val cyclePresetMessages = mutableStateListOf("", "", "", "", "")
     private val cyclePresetIntervals = mutableStateListOf(3, 3, 3, 3, 3)
@@ -324,7 +327,7 @@ class ChatboxViewModel(
             }
         }
 
-        // Cycle persisted enabled/messages/interval
+        // Cycle persisted
         viewModelScope.launch {
             userPreferencesRepository.cycleEnabled.collect {
                 cycleEnabled = it
@@ -372,11 +375,15 @@ class ChatboxViewModel(
             }
         }
 
-        // Collapsed state persisted (defaults true)
-        viewModelScope.launch { userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it } }
+        // Collapsed UI state persisted
+        viewModelScope.launch {
+            userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
+        }
 
-        // NowPlayingState → fields
+        // NowPlayingState -> fields
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -391,6 +398,7 @@ class ChatboxViewModel(
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingIsPlaying = s.isPlaying
 
+                // live preview updates with music changes
                 rebuildCombinedPreviewOnly()
             }
         }
@@ -418,12 +426,11 @@ class ChatboxViewModel(
     private fun getApplicationIdSafely(): String = "com.scrapw.chatbox"
 
     // =========================
-    // KILL switch (stops + clears VRChat chatbox)
+    // KILL switch
     // =========================
     fun killStopAndClear(local: Boolean = false) {
         stopAll(clearFromChatbox = false)
         clearChatbox(local)
-        // also clear preview if nothing is active
         rebuildCombinedPreviewOnly(forceClearIfAllOff = true)
     }
 
@@ -462,7 +469,29 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // AFK text update (persists)
+    // ✅ UI-safe setters for "delay/speed" fields (IP-box style commits)
+    // =========================
+    fun setCycleIntervalSecondsFromUi(value: Int) {
+        val clamped = value.coerceAtLeast(2)
+        cycleIntervalSeconds = clamped
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(clamped) }
+        rebuildCombinedPreviewOnly()
+    }
+
+    /**
+     * NOTE: This does NOT persist unless your repository has a save method.
+     * Kept non-persisting to avoid compile errors.
+     */
+    fun setMusicRefreshSecondsFromUi(value: Int) {
+        val clamped = value.coerceAtLeast(2)
+        musicRefreshSeconds = clamped
+        rebuildCombinedPreviewOnly()
+        // If you add repository support later, persist here.
+        // viewModelScope.launch { userPreferencesRepository.saveMusicRefreshSeconds(clamped) }
+    }
+
+    // =========================
+    // AFK text update
     // =========================
     fun updateAfkText(text: String) {
         afkMessage = text
@@ -471,7 +500,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Cycle lines management (persist as joined string)
+    // Cycle lines management
     // =========================
     private fun setCycleLinesFromText(text: String) {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(10)
@@ -526,9 +555,6 @@ class ChatboxViewModel(
         return firstLine
     }
 
-    // =========================
-    // Hard locked music preset names
-    // =========================
     fun getMusicPresetName(preset: Int): String = when (preset.coerceIn(1, 5)) {
         1 -> "Love"
         2 -> "Minimal"
@@ -547,12 +573,11 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Preset load/save
+    // Preset save/load
     // =========================
     suspend fun saveAfkPreset(slot: Int, text: String) {
         val s = slot.coerceIn(1, 3)
         val idx = s - 1
-
         afkPresetTexts[idx] = text
         when (s) {
             1 -> userPreferencesRepository.saveAfkPreset1(text)
@@ -599,9 +624,7 @@ class ChatboxViewModel(
             else -> userPreferencesRepository.cyclePreset5Messages.first() to userPreferencesRepository.cyclePreset5Interval.first()
         }
 
-        cycleIntervalSeconds = interval.coerceAtLeast(2)
-        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
-
+        setCycleIntervalSecondsFromUi(interval.coerceAtLeast(2))
         setCycleLinesFromText(messages)
         persistCycleLines()
     }
@@ -699,6 +722,7 @@ class ChatboxViewModel(
     private fun rebuildCombinedPreviewOnly(forceClearIfAllOff: Boolean = false) {
         val built = buildCombinedText(cycleLineOverride = null)
         combinedPreviewText = built
+        debugLastCombinedOsc = built
         if (forceClearIfAllOff && built.isBlank()) combinedPreviewText = ""
     }
 
@@ -713,10 +737,13 @@ class ChatboxViewModel(
         if (forceClearIfAllOff && combined.isBlank()) {
             clearChatbox(local)
             combinedPreviewText = ""
+            debugLastCombinedOsc = ""
             return
         }
 
         combinedPreviewText = combined
+        debugLastCombinedOsc = combined
+
         if (!forceSend) return
         if (combined.isBlank()) return
 
@@ -742,9 +769,7 @@ class ChatboxViewModel(
         if (cycleLine.isNotBlank()) lines += cycleLine
         lines.addAll(musicLines)
 
-        val combined = joinWithLimit(lines, 144)
-        debugLastCombinedOsc = combined
-        return combined
+        return joinWithLimit(lines, 144)
     }
 
     private fun clearChatbox(local: Boolean = false) {
@@ -795,29 +820,26 @@ class ChatboxViewModel(
             isPlaying = nowPlayingIsPlaying
         )
 
-        // NOTE: if VRChat wraps, shorten this (e.g. "1:18/3:25")
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        val status = if (!nowPlayingIsPlaying) "Paused" else ""
 
+        // Keep it tight: 2 lines (title line + bar+time). No extra "Paused" line by default.
         val line2 = listOf(bar, time).joinToString(" ").trim()
-        val line3 = status.takeIf { it.isNotBlank() }
 
         return listOfNotNull(
             line1.takeIf { it.isNotBlank() },
-            line2.takeIf { it.isNotBlank() },
-            line3
+            line2.takeIf { it.isNotBlank() }
         )
     }
 
     // =========================
-    // Progress bars (all VR-safe)
+    // Progress bars
     // =========================
     private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long, isPlaying: Boolean): String {
         val duration = max(1L, durMs)
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // Love (10 chars)
+            1 -> { // Love (10 total: ♡ + 8 + ♡)
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -825,7 +847,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> { // Minimal (10 chars)
+            2 -> { // Minimal (10)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -833,7 +855,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // Crystal (10 chars)
+            3 -> { // Crystal (10)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -841,9 +863,9 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ EXACT 10 chars
+            4 -> renderSoundwaveBar(progress01 = p, posMs = posMs, isPlaying = isPlaying) // 10 total
 
-            else -> { // Geometry (10 chars)
+            else -> { // Geometry (10)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -858,8 +880,7 @@ class ChatboxViewModel(
         }
     }
 
-    // Soundwave: pattern-based, not random, phase shifts over time.
-    // Patterns are longer than visible slots; we phase-sample them.
+    // 10 pattern sets. Values are amplitudes 1..8. (No "flat" 0 areas.)
     private val soundwavePatterns: List<IntArray> = listOf(
         intArrayOf(6, 3, 6, 4, 7, 3, 6, 4, 7, 4, 6, 3),
         intArrayOf(7, 4, 6, 3, 7, 5, 6, 3, 7, 4, 6, 5),
@@ -873,26 +894,26 @@ class ChatboxViewModel(
         intArrayOf(7, 4, 6, 7, 3, 5, 7, 4, 6, 7, 3, 5)
     )
 
-    // paused: less bumpy than playing but not flat/dead
-    private val soundwavePaused: IntArray =
-        intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
+    // paused: less bumpy, but not flat
+    private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
     /**
-     * ✅ EXACT LENGTH = 10 chars total:
+     * EXACT LENGTH = 10 chars total:
      * - 8 wave chars
-     * - plus "[" and "]" around the progress slot → +2
+     * - plus "[" and "]" around the progress index → +2
      */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
         val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
 
-        val patternIndex = if (isPlaying) {
-            ((posMs / 1400L) % soundwavePatterns.size).toInt()
-        } else -1
+        // pattern changes slower; phase scrolls faster for "jumpy but clean"
+        val base = if (isPlaying) {
+            val patternIndex = ((posMs / 1400L) % soundwavePatterns.size).toInt()
+            soundwavePatterns[patternIndex]
+        } else {
+            soundwavePaused
+        }
 
-        val base = if (patternIndex >= 0) soundwavePatterns[patternIndex] else soundwavePaused
-
-        // phase = "push" the wave sideways; faster when playing
         val phase = if (isPlaying) {
             ((posMs / 180L) % base.size).toInt()
         } else {
