@@ -1,3 +1,4 @@
+// ChatboxScreen.kt
 package com.scrapw.chatbox
 
 import androidx.compose.animation.core.LinearEasing
@@ -404,14 +405,6 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
-    var cycleIntervalInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(vm.cycleIntervalSeconds.toString()))
-    }
-    LaunchedEffect(vm.cycleIntervalSeconds) {
-        val target = vm.cycleIntervalSeconds.toString()
-        if (cycleIntervalInput.text != target) cycleIntervalInput = TextFieldValue(target)
-    }
-
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
     fun syncCycleLineFieldsFromVm() {
         val valid = vm.cycleLines.indices.toSet()
@@ -543,7 +536,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Up to 10 lines. Stop clears instantly."
+            subtitle = "Up to 10 lines. Stop clears instantly. (Fixed: 10s)"
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Cycle enabled")
@@ -596,18 +589,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
                     ) { Text("Clear") }
                 }
             }
-
-            OutlinedTextField(
-                value = cycleIntervalInput,
-                onValueChange = { v ->
-                    cycleIntervalInput = v
-                    v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Cycle speed (seconds) — min 2") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
 
             ElevatedCard {
                 Column(
@@ -689,15 +670,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
 
-    var refreshInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(vm.musicRefreshSeconds.toString()))
-    }
-    LaunchedEffect(vm.musicRefreshSeconds) {
-        val target = vm.musicRefreshSeconds.toString()
-        if (refreshInput.text != target) refreshInput = TextFieldValue(target)
-    }
-
-    // ✅ Always-animating preview (won't stall after clicking a preset)
+    // ✅ Always-animating preview (should not stall after clicking a preset)
     val infinite = rememberInfiniteTransition(label = "nowPlayingPreview")
     val previewT by infinite.animateFloat(
         initialValue = 0f,
@@ -712,7 +685,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
     PageContainer {
         SectionCard(
             title = "Now Playing (phone music)",
-            subtitle = "Uses Notification Access. Stop clears instantly."
+            subtitle = "Uses Notification Access. Stop clears instantly. (Fixed: 3s)"
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Enable Now Playing block")
@@ -734,18 +707,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 onClick = { ctx.startActivity(vm.notificationAccessIntent()) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Notification Access settings") }
-
-            OutlinedTextField(
-                value = refreshInput,
-                onValueChange = { v ->
-                    refreshInput = v
-                    v.text.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Music refresh speed (seconds) — min 2") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
 
             Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
