@@ -287,7 +287,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
                                 softWrap = true,
-                                maxLines = 3,
+                                maxLines = 6,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
