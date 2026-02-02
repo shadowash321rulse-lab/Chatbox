@@ -30,9 +30,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -56,6 +58,18 @@ private enum class InfoTab(val title: String) {
     Bugs("Bugs"),
     Troubleshoot("Help"),
     FullDoc("Full Doc")
+}
+
+/**
+ * ✅ Cursor-jump fix helper:
+ * When we MUST replace the text from VM/state, preserve the user’s cursor position if possible.
+ */
+private fun TextFieldValue.withNewTextPreserveSelection(newText: String): TextFieldValue {
+    if (this.text == newText) return this
+    val newLen = newText.length
+    val start = selection.start.coerceIn(0, newLen)
+    val end = selection.end.coerceIn(0, newLen)
+    return this.copy(text = newText, selection = TextRange(start, end))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -405,14 +419,32 @@ private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
+
+    // ✅ Track focus per line so VM sync never fights active typing (prevents cursor jumping to start)
+    val cycleLineFocused = remember { mutableStateMapOf<Int, Boolean>() }
+
     fun syncCycleLineFieldsFromVm() {
         val valid = vm.cycleLines.indices.toSet()
         cycleLineFields.keys.toList().forEach { if (it !in valid) cycleLineFields.remove(it) }
+        cycleLineFocused.keys.toList().forEach { if (it !in valid) cycleLineFocused.remove(it) }
+
         vm.cycleLines.forEachIndexed { idx, text ->
             val existing = cycleLineFields[idx]
-            if (existing == null || existing.text != text) cycleLineFields[idx] = TextFieldValue(text)
+            val isFocused = cycleLineFocused[idx] == true
+
+            if (existing == null) {
+                // First time: create value at end
+                cycleLineFields[idx] = TextFieldValue(text, selection = TextRange(text.length))
+                return@forEachIndexed
+            }
+
+            // ✅ Only update from VM when NOT focused. If focused, the user is typing—don’t overwrite their cursor.
+            if (!isFocused && existing.text != text) {
+                cycleLineFields[idx] = existing.withNewTextPreserveSelection(text)
+            }
         }
     }
+
     LaunchedEffect(vm.cycleLines.size) { syncCycleLineFieldsFromVm() }
     LaunchedEffect(vm.cycleLines.toList()) { syncCycleLineFieldsFromVm() }
 
@@ -551,15 +583,22 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 }
 
                 vm.cycleLines.forEachIndexed { idx, _ ->
-                    val fieldValue = cycleLineFields[idx] ?: TextFieldValue(vm.cycleLines.getOrNull(idx).orEmpty())
+                    // Ensure stable value object for cursor/selection.
+                    val currentValue = cycleLineFields.getOrPut(idx) {
+                        val t = vm.cycleLines.getOrNull(idx).orEmpty()
+                        TextFieldValue(t, selection = TextRange(t.length))
+                    }
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
-                            value = fieldValue,
+                            value = currentValue,
                             onValueChange = { newValue ->
                                 cycleLineFields[idx] = newValue
                                 vm.updateCycleLine(idx, newValue.text)
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .onFocusChanged { fs -> cycleLineFocused[idx] = fs.isFocused },
                             singleLine = true,
                             label = { Text("Line ${idx + 1}") }
                         )
