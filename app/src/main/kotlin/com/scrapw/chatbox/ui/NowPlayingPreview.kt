@@ -6,27 +6,33 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.material3.Text
 
+/**
+ * Utility composable for an always-animating preview line.
+ * (Safe even if your project doesn't have getValue delegate imports.)
+ */
 @Composable
-fun MusicPresetPreview(
+fun NowPlayingPreviewText(
     previewTextProvider: (Float) -> String
 ) {
-    val progress by rememberInfiniteTransition(label = "musicPreview")
-        .animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(2200, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "progress"
-        )
+    val infinite = rememberInfiniteTransition(label = "NowPlayingPreviewText")
+    val tState = infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "NowPlayingPreviewTextT"
+    )
 
     Text(
-        text = previewTextProvider(progress),
+        text = previewTextProvider(tState.value),
+        style = MaterialTheme.typography.bodyMedium,
         fontFamily = FontFamily.Monospace
     )
 }
