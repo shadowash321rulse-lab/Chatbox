@@ -30,11 +30,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -58,18 +56,6 @@ private enum class InfoTab(val title: String) {
     Bugs("Bugs"),
     Troubleshoot("Help"),
     FullDoc("Full Doc")
-}
-
-/**
- * ✅ Cursor-jump fix helper:
- * When we MUST replace the text from VM/state, preserve the user’s cursor position if possible.
- */
-private fun TextFieldValue.withNewTextPreserveSelection(newText: String): TextFieldValue {
-    if (this.text == newText) return this
-    val newLen = newText.length
-    val start = selection.start.coerceIn(0, newLen)
-    val end = selection.end.coerceIn(0, newLen)
-    return this.copy(text = newText, selection = TextRange(start, end))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -246,7 +232,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             title = "VRChat Preview",
             subtitle = "Live preview of exactly what will appear in VRChat."
         ) {
-            val previewText = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
+            val rawPreviewText = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
+
+            // ✅ Wrap like VRChat instead of horizontal overflow
+            val previewText = remember(rawPreviewText) {
+                wrapForVrchatPreview(rawPreviewText, maxCharsPerLine = 42)
+            }
 
             Row(
                 Modifier.fillMaxWidth(),
@@ -269,38 +260,37 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // ✅ Fix 1: avatar head can’t clip (avatar is pushed down + fixed height)
-            // ✅ Fix 2: bubble stays centered; long lines scroll horizontally (no layout shove)
+            // ✅ Fix 1: bubble is centered & has VRChat-ish max width
+            // ✅ Fix 2: text wraps (no off-screen overflow)
+            // ✅ Fix 3: avatar head can't clip
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(280.dp)
             ) {
-                // Chat bubble ABOVE head
+                // Chat bubble ABOVE head (centered, not full screen width)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 6.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .widthIn(max = 420.dp), // VRChat-ish centered bubble feel
                     tonalElevation = 3.dp,
                     shape = MaterialTheme.shapes.large
                 ) {
                     Box(
                         Modifier
                             .heightIn(min = 96.dp)
-                            .padding(12.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        val hScroll = rememberScrollState()
                         SelectionContainer {
                             Text(
                                 text = previewText,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(hScroll),
+                                modifier = Modifier.fillMaxWidth(),
                                 fontFamily = FontFamily.Monospace,
                                 style = MaterialTheme.typography.bodyMedium,
-                                softWrap = false // critical: prevents “bar wraps then shifts stuff”
+                                softWrap = true
                             )
                         }
                     }
@@ -317,7 +307,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                     val w = size.width
                     val h = size.height
 
-                    // Head (now always visible)
+                    // Head (always visible)
                     drawCircle(
                         color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
                         radius = w * 0.18f,
@@ -419,32 +409,14 @@ private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
-
-    // ✅ Track focus per line so VM sync never fights active typing (prevents cursor jumping to start)
-    val cycleLineFocused = remember { mutableStateMapOf<Int, Boolean>() }
-
     fun syncCycleLineFieldsFromVm() {
         val valid = vm.cycleLines.indices.toSet()
         cycleLineFields.keys.toList().forEach { if (it !in valid) cycleLineFields.remove(it) }
-        cycleLineFocused.keys.toList().forEach { if (it !in valid) cycleLineFocused.remove(it) }
-
         vm.cycleLines.forEachIndexed { idx, text ->
             val existing = cycleLineFields[idx]
-            val isFocused = cycleLineFocused[idx] == true
-
-            if (existing == null) {
-                // First time: create value at end
-                cycleLineFields[idx] = TextFieldValue(text, selection = TextRange(text.length))
-                return@forEachIndexed
-            }
-
-            // ✅ Only update from VM when NOT focused. If focused, the user is typing—don’t overwrite their cursor.
-            if (!isFocused && existing.text != text) {
-                cycleLineFields[idx] = existing.withNewTextPreserveSelection(text)
-            }
+            if (existing == null || existing.text != text) cycleLineFields[idx] = TextFieldValue(text)
         }
     }
-
     LaunchedEffect(vm.cycleLines.size) { syncCycleLineFieldsFromVm() }
     LaunchedEffect(vm.cycleLines.toList()) { syncCycleLineFieldsFromVm() }
 
@@ -583,22 +555,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 }
 
                 vm.cycleLines.forEachIndexed { idx, _ ->
-                    // Ensure stable value object for cursor/selection.
-                    val currentValue = cycleLineFields.getOrPut(idx) {
-                        val t = vm.cycleLines.getOrNull(idx).orEmpty()
-                        TextFieldValue(t, selection = TextRange(t.length))
-                    }
-
+                    val fieldValue = cycleLineFields[idx] ?: TextFieldValue(vm.cycleLines.getOrNull(idx).orEmpty())
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
-                            value = currentValue,
+                            value = fieldValue,
                             onValueChange = { newValue ->
                                 cycleLineFields[idx] = newValue
                                 vm.updateCycleLine(idx, newValue.text)
                             },
-                            modifier = Modifier
-                                .weight(1f)
-                                .onFocusChanged { fs -> cycleLineFocused[idx] = fs.isFocused },
+                            modifier = Modifier.weight(1f),
                             singleLine = true,
                             label = { Text("Line ${idx + 1}") }
                         )
@@ -628,8 +593,6 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 }
             }
 
-            // ✅ Removed the Cycle speed textbox (setter is private in VM).
-            // Hardlock display (actual lock should be in VM if you want it enforced).
             Text(
                 text = "Cycle speed: fixed at 10 seconds",
                 style = MaterialTheme.typography.bodySmall,
@@ -768,8 +731,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Notification Access settings") }
 
-            // ✅ Removed the Music refresh speed textbox (setter is private in VM).
-            // Hardlock display (actual lock should be in VM if you want it enforced).
             Text(
                 text = "Music refresh speed: fixed at 2 seconds",
                 style = MaterialTheme.typography.bodySmall,
@@ -799,7 +760,6 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                             Column(Modifier.weight(1f)) {
                                 Text(text = name, style = MaterialTheme.typography.titleSmall)
 
-                                // ✅ FIX: preview keeps animating even after selecting a preset
                                 MusicPresetPreviewText { t ->
                                     vm.renderMusicPresetPreview(p, t)
                                 }
@@ -1003,4 +963,53 @@ If anything gets stuck sending: press KILL (stops + clears VRChat).
             }
         }
     }
+}
+
+/**
+ * Wraps text similar to VRChat’s chatbox feel:
+ * - Wrap each line at maxCharsPerLine
+ * - Prefer breaking on spaces, but hard-break if needed
+ */
+private fun wrapForVrchatPreview(text: String, maxCharsPerLine: Int = 42): String {
+    if (text.isBlank()) return text
+
+    fun wrapLine(line: String): List<String> {
+        val s = line.trimEnd()
+        if (s.length <= maxCharsPerLine) return listOf(s)
+
+        val out = ArrayList<String>()
+        var i = 0
+        while (i < s.length) {
+            val end = (i + maxCharsPerLine).coerceAtMost(s.length)
+            if (end == s.length) {
+                out.add(s.substring(i))
+                break
+            }
+
+            // Try break on last space within the window
+            val window = s.substring(i, end)
+            val lastSpace = window.lastIndexOf(' ')
+            if (lastSpace >= 8) {
+                out.add(window.substring(0, lastSpace).trimEnd())
+                i += lastSpace + 1
+            } else {
+                // Hard break (no good space)
+                out.add(window)
+                i = end
+            }
+        }
+        return out
+    }
+
+    val lines = text.split("\n")
+    val wrapped = buildList {
+        for (ln in lines) {
+            if (ln.isBlank()) {
+                add("")
+            } else {
+                addAll(wrapLine(ln))
+            }
+        }
+    }
+    return wrapped.joinToString("\n")
 }
