@@ -404,14 +404,6 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
-    var cycleIntervalInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(vm.cycleIntervalSeconds.toString()))
-    }
-    LaunchedEffect(vm.cycleIntervalSeconds) {
-        val target = vm.cycleIntervalSeconds.toString()
-        if (cycleIntervalInput.text != target) cycleIntervalInput = TextFieldValue(target)
-    }
-
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
     fun syncCycleLineFieldsFromVm() {
         val valid = vm.cycleLines.indices.toSet()
@@ -597,16 +589,12 @@ private fun CyclePage(vm: ChatboxViewModel) {
                 }
             }
 
-            OutlinedTextField(
-                value = cycleIntervalInput,
-                onValueChange = { v ->
-                    cycleIntervalInput = v
-                    v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Cycle speed (seconds) — min 2") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            // ✅ Removed the Cycle speed textbox (setter is private in VM).
+            // Hardlock display (actual lock should be in VM if you want it enforced).
+            Text(
+                text = "Cycle speed: fixed at 10 seconds",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             ElevatedCard {
@@ -686,15 +674,15 @@ private fun CyclePage(vm: ChatboxViewModel) {
 }
 
 /**
- * ✅ NEW: Always-animating preset preview that won't freeze after selecting a preset.
- * We keep the infinite transition inside this composable so it keeps ticking.
+ * ✅ Always-animating preset preview (fixes “bars stop animating after selecting”)
+ * No VM setters involved.
  */
 @Composable
-private fun MusicPresetPreview(
+private fun MusicPresetPreviewText(
     previewTextProvider: (Float) -> String
 ) {
     val infinite = rememberInfiniteTransition(label = "musicPresetPreview")
-    val t by infinite.animateFloat(
+    val tState = infinite.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -705,7 +693,7 @@ private fun MusicPresetPreview(
     )
 
     Text(
-        text = previewTextProvider(t),
+        text = previewTextProvider(tState.value),
         style = MaterialTheme.typography.bodyMedium,
         fontFamily = FontFamily.Monospace
     )
@@ -714,14 +702,6 @@ private fun MusicPresetPreview(
 @Composable
 private fun NowPlayingPage(vm: ChatboxViewModel) {
     val ctx = LocalContext.current
-
-    var refreshInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(vm.musicRefreshSeconds.toString()))
-    }
-    LaunchedEffect(vm.musicRefreshSeconds) {
-        val target = vm.musicRefreshSeconds.toString()
-        if (refreshInput.text != target) refreshInput = TextFieldValue(target)
-    }
 
     PageContainer {
         SectionCard(
@@ -749,16 +729,12 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Notification Access settings") }
 
-            OutlinedTextField(
-                value = refreshInput,
-                onValueChange = { v ->
-                    refreshInput = v
-                    v.text.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Music refresh speed (seconds) — min 2") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            // ✅ Removed the Music refresh speed textbox (setter is private in VM).
+            // Hardlock display (actual lock should be in VM if you want it enforced).
+            Text(
+                text = "Music refresh speed: fixed at 3 seconds",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
@@ -784,8 +760,8 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                             Column(Modifier.weight(1f)) {
                                 Text(text = name, style = MaterialTheme.typography.titleSmall)
 
-                                // ✅ FIX: always-animating preview that won't freeze after clicking
-                                MusicPresetPreview { t ->
+                                // ✅ FIX: preview keeps animating even after selecting a preset
+                                MusicPresetPreviewText { t ->
                                     vm.renderMusicPresetPreview(p, t)
                                 }
                             }
