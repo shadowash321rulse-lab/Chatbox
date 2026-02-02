@@ -732,7 +732,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
             // ✅ Removed the Music refresh speed textbox (setter is private in VM).
             // Hardlock display (actual lock should be in VM if you want it enforced).
             Text(
-                text = "Music refresh speed: fixed at 3 seconds",
+                text = "Music refresh speed: fixed at 2 seconds",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
