@@ -44,7 +44,7 @@ class ChatboxViewModel(
 
         // ✅ Locked delays (per your request)
         private const val CYCLE_INTERVAL_SECONDS_LOCKED = 10
-        private const val MUSIC_REFRESH_SECONDS_LOCKED = 3
+        private const val MUSIC_REFRESH_SECONDS_LOCKED = 2
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
