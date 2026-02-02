@@ -1,4 +1,3 @@
-// ChatboxScreen.kt
 package com.scrapw.chatbox
 
 import androidx.compose.animation.core.LinearEasing
@@ -405,6 +404,14 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 private fun CyclePage(vm: ChatboxViewModel) {
     val scope = rememberCoroutineScope()
 
+    var cycleIntervalInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(vm.cycleIntervalSeconds.toString()))
+    }
+    LaunchedEffect(vm.cycleIntervalSeconds) {
+        val target = vm.cycleIntervalSeconds.toString()
+        if (cycleIntervalInput.text != target) cycleIntervalInput = TextFieldValue(target)
+    }
+
     val cycleLineFields = remember { mutableStateMapOf<Int, TextFieldValue>() }
     fun syncCycleLineFieldsFromVm() {
         val valid = vm.cycleLines.indices.toSet()
@@ -536,7 +543,7 @@ private fun CyclePage(vm: ChatboxViewModel) {
 
         SectionCard(
             title = "Cycle Messages",
-            subtitle = "Up to 10 lines. Stop clears instantly. (Fixed: 10s)"
+            subtitle = "Up to 10 lines. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Cycle enabled")
@@ -589,6 +596,18 @@ private fun CyclePage(vm: ChatboxViewModel) {
                     ) { Text("Clear") }
                 }
             }
+
+            OutlinedTextField(
+                value = cycleIntervalInput,
+                onValueChange = { v ->
+                    cycleIntervalInput = v
+                    v.text.toIntOrNull()?.let { vm.cycleIntervalSeconds = it.coerceAtLeast(2) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Cycle speed (seconds) — min 2") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
 
             ElevatedCard {
                 Column(
@@ -666,26 +685,48 @@ private fun CyclePage(vm: ChatboxViewModel) {
     }
 }
 
+/**
+ * ✅ NEW: Always-animating preset preview that won't freeze after selecting a preset.
+ * We keep the infinite transition inside this composable so it keeps ticking.
+ */
 @Composable
-private fun NowPlayingPage(vm: ChatboxViewModel) {
-    val ctx = LocalContext.current
-
-    // ✅ Always-animating preview (should not stall after clicking a preset)
-    val infinite = rememberInfiniteTransition(label = "nowPlayingPreview")
-    val previewT by infinite.animateFloat(
+private fun MusicPresetPreview(
+    previewTextProvider: (Float) -> String
+) {
+    val infinite = rememberInfiniteTransition(label = "musicPresetPreview")
+    val t by infinite.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 2200, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "previewT"
+        label = "musicPresetPreviewT"
     )
+
+    Text(
+        text = previewTextProvider(t),
+        style = MaterialTheme.typography.bodyMedium,
+        fontFamily = FontFamily.Monospace
+    )
+}
+
+@Composable
+private fun NowPlayingPage(vm: ChatboxViewModel) {
+    val ctx = LocalContext.current
+
+    var refreshInput by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(vm.musicRefreshSeconds.toString()))
+    }
+    LaunchedEffect(vm.musicRefreshSeconds) {
+        val target = vm.musicRefreshSeconds.toString()
+        if (refreshInput.text != target) refreshInput = TextFieldValue(target)
+    }
 
     PageContainer {
         SectionCard(
             title = "Now Playing (phone music)",
-            subtitle = "Uses Notification Access. Stop clears instantly. (Fixed: 3s)"
+            subtitle = "Uses Notification Access. Stop clears instantly."
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Enable Now Playing block")
@@ -708,13 +749,24 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Open Notification Access settings") }
 
+            OutlinedTextField(
+                value = refreshInput,
+                onValueChange = { v ->
+                    refreshInput = v
+                    v.text.toIntOrNull()?.let { vm.musicRefreshSeconds = it.coerceAtLeast(2) }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Music refresh speed (seconds) — min 2") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
             Text("Progress bar preset:", style = MaterialTheme.typography.labelLarge)
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..5).forEach { p ->
                     val selected = (vm.spotifyPreset == p)
                     val name = vm.getMusicPresetName(p)
-                    val preview = vm.renderMusicPresetPreview(p, previewT)
 
                     ElevatedCard(
                         colors = if (selected) CardDefaults.elevatedCardColors(
@@ -731,11 +783,11 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(text = name, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = preview,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontFamily = FontFamily.Monospace
-                                )
+
+                                // ✅ FIX: always-animating preview that won't freeze after clicking
+                                MusicPresetPreview { t ->
+                                    vm.renderMusicPresetPreview(p, t)
+                                }
                             }
                             if (selected) Text("Selected", style = MaterialTheme.typography.labelMedium)
                         }
