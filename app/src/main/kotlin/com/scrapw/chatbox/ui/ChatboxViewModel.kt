@@ -7,7 +7,10 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.annotation.MainThread
-import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
@@ -248,7 +251,7 @@ class ChatboxViewModel(
     var spotifyPreset by mutableStateOf(1)
         private set
 
-    // ✅ Locked to 3s (no UI control anymore)
+    // ✅ Locked to 2s (no UI control anymore)
     var musicRefreshSeconds by mutableStateOf(MUSIC_REFRESH_SECONDS_LOCKED)
         private set
 
@@ -326,9 +329,13 @@ class ChatboxViewModel(
                 rebuildCombinedPreviewOnly()
             }
         }
+
+        // ✅ IMPORTANT FIX (cursor jump):
+        // Do NOT trim/normalize user text when loading cycle lines.
+        // Normalizing while user types causes Compose TextField selection to reset (often to start).
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
-                setCycleLinesFromText(text)
+                setCycleLinesFromTextPreserve(text)
             }
         }
 
@@ -465,42 +472,47 @@ class ChatboxViewModel(
     // =========================
     // Cycle lines management
     // =========================
-    private fun setCycleLinesFromText(text: String) {
-        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(10)
+
+    // ✅ Preserve exact user text, including leading/trailing spaces.
+    // This prevents TextField selection/cursor jumps caused by us "fixing" their text mid-typing.
+    private fun setCycleLinesFromTextPreserve(text: String) {
+        val raw = text.split("\n")
+        val lines = raw.take(10) // keep slots stable; UI already caps at 10
         cycleLines.clear()
         cycleLines.addAll(lines)
         rebuildCombinedPreviewOnly()
     }
 
-    private fun persistCycleLines() {
-        val joined = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
+    // ✅ Persist exactly what the user typed (no trim/filter).
+    private fun persistCycleLinesPreserve() {
+        val joined = cycleLines.take(10).joinToString("\n")
         viewModelScope.launch { userPreferencesRepository.saveCycleMessages(joined) }
     }
 
     fun addCycleLine() {
         if (cycleLines.size >= 10) return
         cycleLines.add("")
-        persistCycleLines()
+        persistCycleLinesPreserve()
         rebuildCombinedPreviewOnly()
     }
 
     fun removeCycleLine(index: Int) {
         if (index !in cycleLines.indices) return
         cycleLines.removeAt(index)
-        persistCycleLines()
+        persistCycleLinesPreserve()
         rebuildCombinedPreviewOnly()
     }
 
     fun updateCycleLine(index: Int, value: String) {
         if (index !in cycleLines.indices) return
         cycleLines[index] = value
-        persistCycleLines()
+        persistCycleLinesPreserve()
         rebuildCombinedPreviewOnly()
     }
 
     fun clearCycleLines() {
         cycleLines.clear()
-        persistCycleLines()
+        persistCycleLinesPreserve()
         rebuildCombinedPreviewOnly()
     }
 
@@ -588,8 +600,9 @@ class ChatboxViewModel(
         cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
         viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
 
-        setCycleLinesFromText(messages)
-        persistCycleLines()
+        // Presets are stored trimmed by design; that’s fine.
+        setCycleLinesFromTextPreserve(messages)
+        persistCycleLinesPreserve()
     }
 
     // =========================
@@ -624,7 +637,7 @@ class ChatboxViewModel(
         if (!cycleEnabled || msgs.isEmpty()) return
 
         viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(true) }
-        persistCycleLines()
+        persistCycleLinesPreserve()
         cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
         viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
 
