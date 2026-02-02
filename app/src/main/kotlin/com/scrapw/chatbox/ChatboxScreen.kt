@@ -8,7 +8,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,6 +35,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scrapw.chatbox.ui.ChatboxViewModel
@@ -232,12 +233,8 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             title = "VRChat Preview",
             subtitle = "Live preview of exactly what will appear in VRChat."
         ) {
-            val rawPreviewText = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
-
-            // ✅ Wrap like VRChat instead of horizontal overflow
-            val previewText = remember(rawPreviewText) {
-                wrapForVrchatPreview(rawPreviewText, maxCharsPerLine = 42)
-            }
+            val previewTextRaw = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
+            val previewText = remember(previewTextRaw) { vrChatSafePreview(previewTextRaw) }
 
             Row(
                 Modifier.fillMaxWidth(),
@@ -260,29 +257,27 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // ✅ Fix 1: bubble is centered & has VRChat-ish max width
-            // ✅ Fix 2: text wraps (no off-screen overflow)
-            // ✅ Fix 3: avatar head can't clip
+            // ✅ FIXED: centered bubble + VRChat-ish wrap (3 lines, ellipsis, no overflow)
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(280.dp)
             ) {
-                // Chat bubble ABOVE head (centered, not full screen width)
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 6.dp)
-                        .fillMaxWidth()
-                        .widthIn(max = 420.dp), // VRChat-ish centered bubble feel
+                        // VRChat-ish "bubble width cap" so it doesn't look left-stretched on wide screens
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth(),
                     tonalElevation = 3.dp,
                     shape = MaterialTheme.shapes.large
                 ) {
                     Box(
                         Modifier
                             .heightIn(min = 96.dp)
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        contentAlignment = Alignment.CenterStart
+                            .padding(12.dp)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
                     ) {
                         SelectionContainer {
                             Text(
@@ -290,13 +285,16 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                                 modifier = Modifier.fillMaxWidth(),
                                 fontFamily = FontFamily.Monospace,
                                 style = MaterialTheme.typography.bodyMedium,
-                                softWrap = true
+                                textAlign = TextAlign.Center,
+                                softWrap = true,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
 
-                // Avatar silhouette (lowered so bubble never hides the head)
+                // Avatar silhouette
                 Canvas(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -307,14 +305,12 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                     val w = size.width
                     val h = size.height
 
-                    // Head (always visible)
                     drawCircle(
                         color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
                         radius = w * 0.18f,
                         center = Offset(w * 0.5f, h * 0.20f)
                     )
 
-                    // Body
                     val path = Path().apply {
                         moveTo(w * 0.50f, h * 0.36f)
                         cubicTo(w * 0.18f, h * 0.40f, w * 0.18f, h * 0.96f, w * 0.50f, h * 0.98f)
@@ -759,10 +755,7 @@ private fun NowPlayingPage(vm: ChatboxViewModel) {
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(text = name, style = MaterialTheme.typography.titleSmall)
-
-                                MusicPresetPreviewText { t ->
-                                    vm.renderMusicPresetPreview(p, t)
-                                }
+                                MusicPresetPreviewText { t -> vm.renderMusicPresetPreview(p, t) }
                             }
                             if (selected) Text("Selected", style = MaterialTheme.typography.labelMedium)
                         }
@@ -927,9 +920,7 @@ If anything gets stuck sending: press KILL (stops + clears VRChat).
             subtitle = "Overview, tutorial, features, and troubleshooting."
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 InfoTab.entries.forEach { t ->
@@ -966,50 +957,28 @@ If anything gets stuck sending: press KILL (stops + clears VRChat).
 }
 
 /**
- * Wraps text similar to VRChat’s chatbox feel:
- * - Wrap each line at maxCharsPerLine
- * - Prefer breaking on spaces, but hard-break if needed
+ * Makes preview behave nicer:
+ * - Inserts zero-width breaks into long unbroken tokens so Text can wrap
+ * - Keeps newlines intact
  */
-private fun wrapForVrchatPreview(text: String, maxCharsPerLine: Int = 42): String {
-    if (text.isBlank()) return text
+private fun vrChatSafePreview(input: String): String {
+    val zwsp = '\u200B'
+    val maxToken = 18
 
-    fun wrapLine(line: String): List<String> {
-        val s = line.trimEnd()
-        if (s.length <= maxCharsPerLine) return listOf(s)
-
-        val out = ArrayList<String>()
+    fun breakLongToken(token: String): String {
+        if (token.length <= maxToken) return token
+        val sb = StringBuilder(token.length + token.length / maxToken)
         var i = 0
-        while (i < s.length) {
-            val end = (i + maxCharsPerLine).coerceAtMost(s.length)
-            if (end == s.length) {
-                out.add(s.substring(i))
-                break
-            }
-
-            // Try break on last space within the window
-            val window = s.substring(i, end)
-            val lastSpace = window.lastIndexOf(' ')
-            if (lastSpace >= 8) {
-                out.add(window.substring(0, lastSpace).trimEnd())
-                i += lastSpace + 1
-            } else {
-                // Hard break (no good space)
-                out.add(window)
-                i = end
-            }
+        while (i < token.length) {
+            val end = (i + maxToken).coerceAtMost(token.length)
+            sb.append(token.substring(i, end))
+            if (end < token.length) sb.append(zwsp)
+            i = end
         }
-        return out
+        return sb.toString()
     }
 
-    val lines = text.split("\n")
-    val wrapped = buildList {
-        for (ln in lines) {
-            if (ln.isBlank()) {
-                add("")
-            } else {
-                addAll(wrapLine(ln))
-            }
-        }
+    return input.lines().joinToString("\n") { line ->
+        line.split(" ").joinToString(" ") { breakLongToken(it) }
     }
-    return wrapped.joinToString("\n")
 }
