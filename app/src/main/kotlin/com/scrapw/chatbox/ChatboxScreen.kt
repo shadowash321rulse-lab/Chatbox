@@ -53,8 +53,6 @@ private enum class AppPage(val title: String) {
 private enum class InfoTab(val title: String) {
     Overview("Overview"),
     Tutorial("Tutorial"),
-    Features("Features"),
-    Bugs("Bugs"),
     Troubleshoot("Help"),
     FullDoc("Full Doc")
 }
@@ -233,6 +231,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
             title = "VRChat Preview",
             subtitle = "Live preview of exactly what will appear in VRChat."
         ) {
+            // VM already enforces 144 chars; UI enforces 9 lines.
             val previewTextRaw = vm.debugLastCombinedOsc.ifBlank { "(nothing active)" }
             val previewText = remember(previewTextRaw) { vrChatSafePreview(previewTextRaw) }
 
@@ -257,7 +256,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // ✅ FIXED: centered bubble + VRChat-ish wrap (3 lines, ellipsis, no overflow)
+            // ✅ Centered bubble + wrap + 9-line UI cap (VRChat-ish)
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -266,9 +265,8 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        // VRChat-ish "bubble width cap" so it doesn't look left-stretched on wide screens
                         .widthIn(max = 420.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth(0.92f),
                     tonalElevation = 3.dp,
                     shape = MaterialTheme.shapes.large
                 ) {
@@ -287,7 +285,7 @@ private fun DashboardPage(vm: ChatboxViewModel) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
                                 softWrap = true,
-                                maxLines = 6,
+                                maxLines = 9,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -866,29 +864,6 @@ Restart VRC-A, play music, then Now Playing → Start.
         """.trimIndent()
     }
 
-    val features = remember {
-        """
-FEATURES
-
-- Live VR preview (centered like VRChat)
-- KILL switch (stops + clears chatbox)
-- AFK + presets
-- Cycle + presets
-- Now Playing (Notification Access)
-- Soundwave progress bar (short, VR-safe length)
-- System sheet (Notification / Overlay / Battery optimization)
-        """.trimIndent()
-    }
-
-    val bugs = remember {
-        """
-NOTES
-
-- Some media apps don’t provide smooth playback position updates.
-- Some routers block device-to-device traffic (“client isolation”).
-        """.trimIndent()
-    }
-
     val help = remember {
         """
 TROUBLESHOOT
@@ -917,7 +892,7 @@ If anything gets stuck sending: press KILL (stops + clears VRChat).
     PageContainer {
         SectionCard(
             title = "Information",
-            subtitle = "Overview, tutorial, features, and troubleshooting."
+            subtitle = "Overview, tutorial, and troubleshooting."
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -939,8 +914,6 @@ If anything gets stuck sending: press KILL (stops + clears VRChat).
             val text = when (tab) {
                 InfoTab.Overview -> overview
                 InfoTab.Tutorial -> tutorial
-                InfoTab.Features -> features
-                InfoTab.Bugs -> bugs
                 InfoTab.Troubleshoot -> help
                 InfoTab.FullDoc -> fullDoc
             }
@@ -982,3 +955,4 @@ private fun vrChatSafePreview(input: String): String {
         line.split(" ").joinToString(" ") { breakLongToken(it) }
     }
 }
+```0
