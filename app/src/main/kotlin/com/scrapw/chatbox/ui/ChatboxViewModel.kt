@@ -214,9 +214,6 @@ class ChatboxViewModel(
 
     private var lastCombinedSendMs = 0L
 
-    // ✅ FIX: force-send when play state flips (so "Paused" always shows)
-    private var lastNowPlayingIsPlayingSent: Boolean? = null
-
     // =========================
     // AFK
     // =========================
@@ -288,13 +285,23 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
+    // Raw playbackState from notifications
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
+
+    // ✅ Derived playback: fixes "Paused sticks after skipping songs"
+    private var derivedIsPlaying: Boolean = false
 
     private var nowPlayingDurationMs: Long = 0L
     private var nowPlayingPositionMs: Long = 0L
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
+
+    // For movement detection + track-change grace
+    private var lastRawPosMs: Long = 0L
+    private var lastRawUpdateTimeMs: Long = 0L
+    private var lastTrackKey: String = ""
+    private var lastTrackChangeElapsedMs: Long = 0L
 
     var debugLastAfkOsc by mutableStateOf("")
         private set
@@ -341,7 +348,7 @@ class ChatboxViewModel(
             }
         }
 
-        // ✅ Still read stored cycle interval, but enforce lock.
+        // ✅ Always enforce locked cycle interval
         viewModelScope.launch {
             userPreferencesRepository.cycleInterval.collect {
                 cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
@@ -371,12 +378,8 @@ class ChatboxViewModel(
             }
         }
 
-        viewModelScope.launch {
-            userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it }
-        }
-        viewModelScope.launch {
-            userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
-        }
+        viewModelScope.launch { userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it } }
+        viewModelScope.launch { userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it } }
 
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
@@ -390,17 +393,58 @@ class ChatboxViewModel(
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
-
-                val prevPlaying = nowPlayingIsPlaying
                 nowPlayingIsPlaying = s.isPlaying
 
+                updateDerivedPlaybackState()
                 rebuildCombinedPreviewOnly()
-
-                // ✅ FIX: If play state flips, force-send immediately so "Paused" shows in VRChat.
-                if (spotifyEnabled && prevPlaying != nowPlayingIsPlaying) {
-                    rebuildAndMaybeSendCombined(forceSend = true, forcePlayStateSend = true)
-                }
             }
+        }
+    }
+
+    // =========================
+    // Derived playback (progress-moving-based)
+    // =========================
+    private fun makeTrackKey(): String {
+        val pkg = activePackage
+        val t = lastNowPlayingTitle
+        val a = lastNowPlayingArtist
+        val d = nowPlayingDurationMs
+        return "$pkg|$d|$a|$t"
+    }
+
+    private fun updateDerivedPlaybackState() {
+        val nowElapsed = SystemClock.elapsedRealtime()
+
+        val key = makeTrackKey()
+        val trackLooksValid = (lastNowPlayingTitle != "(blank)" && lastNowPlayingTitle.isNotBlank()) ||
+            (lastNowPlayingArtist != "(blank)" && lastNowPlayingArtist.isNotBlank())
+
+        // Track-change grace: avoid "Paused" sticking during metadata swaps / skips.
+        if (trackLooksValid && key != lastTrackKey) {
+            lastTrackKey = key
+            lastTrackChangeElapsedMs = nowElapsed
+            // reset movement sampler so first update doesn't falsely "stick"
+            lastRawPosMs = nowPlayingPositionMs
+            lastRawUpdateTimeMs = nowPlayingPositionUpdateTimeMs
+        }
+
+        // Movement detection: if position updates and actually moves, treat as playing.
+        var moved = false
+        if (nowPlayingPositionUpdateTimeMs != 0L && nowPlayingPositionUpdateTimeMs != lastRawUpdateTimeMs) {
+            val dp = nowPlayingPositionMs - lastRawPosMs
+            // > ~0.35s movement is "definitely playing"
+            moved = dp > 350L
+            lastRawPosMs = nowPlayingPositionMs
+            lastRawUpdateTimeMs = nowPlayingPositionUpdateTimeMs
+        }
+
+        val inGrace = (nowElapsed - lastTrackChangeElapsedMs) < 2500L
+
+        derivedIsPlaying = when {
+            nowPlayingIsPlaying -> true
+            moved -> true
+            inGrace && trackLooksValid -> true
+            else -> false
         }
     }
 
@@ -453,10 +497,7 @@ class ChatboxViewModel(
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
         rebuildCombinedPreviewOnly()
-        if (!enabled) {
-            lastNowPlayingIsPlayingSent = null
-            stopNowPlayingSender(clearFromChatbox = true)
-        }
+        if (!enabled) stopNowPlayingSender(clearFromChatbox = true)
     }
 
     fun setSpotifyDemoFlag(enabled: Boolean) {
@@ -711,8 +752,7 @@ class ChatboxViewModel(
         forceSend: Boolean,
         local: Boolean = false,
         cycleLineOverride: String? = null,
-        forceClearIfAllOff: Boolean = false,
-        forcePlayStateSend: Boolean = false
+        forceClearIfAllOff: Boolean = false
     ) {
         val combined = buildCombinedText(cycleLineOverride)
 
@@ -726,17 +766,12 @@ class ChatboxViewModel(
         if (!forceSend) return
         if (combined.isBlank()) return
 
-        // ✅ FIX: If play state changed, bypass throttle so Paused/Playing always reaches VRChat.
-        val playChanged = (lastNowPlayingIsPlayingSent == null || lastNowPlayingIsPlayingSent != nowPlayingIsPlaying)
-        val bypassThrottle = forcePlayStateSend || (spotifyEnabled && playChanged)
-
         val nowMs = System.currentTimeMillis()
         val minMs = 2_000L
-        if (!bypassThrottle && nowMs - lastCombinedSendMs < minMs) return
+        if (nowMs - lastCombinedSendMs < minMs) return
 
         sendToVrchatRaw(combined, local, addToConversation = false)
         lastCombinedSendMs = nowMs
-        if (spotifyEnabled) lastNowPlayingIsPlayingSent = nowPlayingIsPlaying
     }
 
     private fun buildCombinedText(cycleLineOverride: String?): String {
@@ -753,8 +788,7 @@ class ChatboxViewModel(
         if (cycleLine.isNotBlank()) lines += cycleLine
         lines.addAll(musicLines)
 
-        // ✅ 9 lines + 144 chars cap
-        val combined = joinWithLimit(lines, limitChars = 144, limitLines = 9)
+        val combined = joinWithLimit(lines, 144)
         debugLastCombinedOsc = combined
         return combined
     }
@@ -782,25 +816,19 @@ class ChatboxViewModel(
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
         val maxLine = 42
-
-        // ✅ Artist drop filter (heuristic): if "Artist — Title" likely exceeds 2 lines, drop artist.
-        val combinedFull = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
-        val line1Raw = if (combinedFull.length > maxLine * 2) {
-            safeTitle
-        } else {
-            combinedFull
-        }
-
+        val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
         val line1 = when {
-            line1Raw.length <= maxLine * 2 -> line1Raw
-            safeTitle.length <= maxLine * 2 -> safeTitle
-            else -> safeTitle.take(maxLine * 2 - 1) + "…"
+            combined.length <= maxLine -> combined
+            safeTitle.length <= maxLine -> safeTitle
+            else -> safeTitle.take(maxLine - 1) + "…"
         }.trim()
 
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
 
-        val pos = if (nowPlayingIsPlaying && dur > 0L) {
+        val playing = derivedIsPlaying
+
+        val pos = if (playing && dur > 0L) {
             val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
             val adj = (elapsed * nowPlayingSpeed).toLong()
             (posSnapshot + max(0L, adj)).coerceAtMost(dur)
@@ -812,11 +840,11 @@ class ChatboxViewModel(
             preset = spotifyPreset,
             posMs = pos,
             durMs = max(1L, dur),
-            isPlaying = nowPlayingIsPlaying
+            isPlaying = playing
         )
 
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        val status = if (!nowPlayingIsPlaying) "Paused" else ""
+        val status = if (!playing) "Paused" else ""
 
         val line2 = listOf(bar, time).joinToString(" ").trim()
         val line3 = status.takeIf { it.isNotBlank() }
@@ -856,7 +884,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            4 -> renderSoundwaveBar(p, posMs, isPlaying) // soundwave
+            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ soundwave uses square marker
 
             else -> { // Geometry (10 chars)
                 val slots = 10
@@ -892,8 +920,7 @@ class ChatboxViewModel(
      * ✅ EXACT LENGTH = 10 chars total:
      * - 8 wave chars
      * - plus "[" and "]" around the progress index → +2
-     *
-     * ✅ Marker changed to techy square: [■] only for soundwave.
+     * ✅ Marker inside brackets is square: uses ▣
      */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
@@ -914,7 +941,8 @@ class ChatboxViewModel(
         val out = StringBuilder(10)
         for (i in 0 until slots) {
             if (i == idx) out.append('[')
-            out.append(if (i == idx) '■' else chars[i])
+            // replace the tracked "dot" with square marker at the index
+            out.append(if (i == idx) '▣' else chars[i])
             if (i == idx) out.append(']')
         }
         return out.toString()
@@ -938,12 +966,7 @@ class ChatboxViewModel(
         return "${m}:${s.toString().padStart(2, '0')}"
     }
 
-    /**
-     * ✅ Caps BOTH:
-     * - max total characters (including newlines)
-     * - max lines
-     */
-    private fun joinWithLimit(lines: List<String>, limitChars: Int, limitLines: Int): String {
+    private fun joinWithLimit(lines: List<String>, limit: Int): String {
         if (lines.isEmpty()) return ""
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
@@ -952,15 +975,12 @@ class ChatboxViewModel(
         var total = 0
 
         for (line in clean) {
-            if (out.size >= limitLines) break
-
             val add = if (out.isEmpty()) line.length else (1 + line.length)
-            if (total + add > limitChars) {
-                val remain = limitChars - total - (if (out.isEmpty()) 0 else 1)
+            if (total + add > limit) {
+                val remain = limit - total - (if (out.isEmpty()) 0 else 1)
                 if (remain >= 2) out.add(line.take(remain - 1) + "…")
                 break
             }
-
             out.add(line)
             total += add
         }
