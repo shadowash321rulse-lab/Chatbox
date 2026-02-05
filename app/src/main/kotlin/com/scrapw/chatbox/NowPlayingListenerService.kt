@@ -22,12 +22,6 @@ class NowPlayingListenerService : NotificationListenerService() {
         "com.bandcamp.android"
     )
 
-    // Last known snapshot pieces (for skip detection)
-    private var lastTitle: String = ""
-    private var lastArtist: String = ""
-    private var lastDuration: Long = 0L
-    private var lastPosition: Long = 0L
-
     override fun onListenerConnected() {
         super.onListenerConnected()
         NowPlayingState.setConnected(true)
@@ -42,15 +36,15 @@ class NowPlayingListenerService : NotificationListenerService() {
         if (sbn == null) return
 
         val pkg = sbn.packageName ?: return
-        val notif = sbn.notification ?: return
-        val extras = notif.extras
-
         if (allowedPackages.isNotEmpty() && pkg !in allowedPackages) return
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
+        val notif = sbn.notification ?: return
+        val extras = notif.extras ?: return
 
-        val token: android.media.session.MediaSession.Token? =
+        val token = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            @Suppress("DEPRECATION")
             extras.getParcelable(Notification.EXTRA_MEDIA_SESSION)
+        } else null
 
         if (token == null) return
 
@@ -63,49 +57,25 @@ class NowPlayingListenerService : NotificationListenerService() {
             val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty()
             val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
 
-            val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
-
-            val position = pb?.position ?: 0L
-            val lastUpdate =
-                pb?.lastPositionUpdateTime?.takeIf { it > 0 }
-                    ?: SystemClock.elapsedRealtime()
-
+            val rawPos = pb?.position ?: 0L
+            val lastUpdate = pb?.lastPositionUpdateTime ?: SystemClock.elapsedRealtime()
             val speed = pb?.playbackSpeed ?: 1f
-
-            // ===== SKIP DETECTION =====
-            val titleChanged = title.isNotBlank() && title != lastTitle
-            val artistChanged = artist.isNotBlank() && artist != lastArtist
-            val durationChanged = duration > 0 && duration != lastDuration
-
-            // Position jumped backwards significantly → likely new track
-            val positionReset =
-                position < lastPosition &&
-                        (lastPosition - position) > 5_000L
-
-            val detected = titleChanged || artistChanged || durationChanged || positionReset
-
-            // Update memory
-            lastTitle = title
-            lastArtist = artist
-            lastDuration = duration
-            lastPosition = position
 
             NowPlayingState.update(
                 NowPlayingSnapshot(
                     listenerConnected = true,
                     activePackage = pkg,
-                    detected = detected || title.isNotBlank() || artist.isNotBlank(),
+                    detected = title.isNotBlank() || artist.isNotBlank(),
                     title = title,
                     artist = artist,
                     durationMs = duration,
-                    positionMs = position,
+                    positionMs = rawPos,
                     positionUpdateTimeMs = lastUpdate,
                     playbackSpeed = speed,
-                    isPlaying = isPlaying
+                    isPlaying = false // ← DO NOT TRUST THIS
                 )
             )
         } catch (_: Throwable) {
-            // ignore bad controllers
         }
     }
 
