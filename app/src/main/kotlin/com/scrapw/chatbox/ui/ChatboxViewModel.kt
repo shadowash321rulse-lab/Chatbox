@@ -37,6 +37,7 @@ import kotlinx.coroutines.runBlocking
 import java.time.Instant
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.abs
 
 class ChatboxViewModel(
     private val userPreferencesRepository: UserPreferencesRepository
@@ -55,6 +56,9 @@ class ChatboxViewModel(
 
         // ✅ send floor (DO NOT go faster than this)
         private const val SEND_FLOOR_MS = 2_000L
+
+        // ✅ track-change grace window for missing position updates (fast skipping)
+        private const val TRACK_CHANGE_GRACE_MS = 8_000L
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -239,7 +243,7 @@ class ChatboxViewModel(
     var cycleEnabled by mutableStateOf(false)
         private set
 
-    // ✅ Locked to 10s (no UI control anymore)
+    // ✅ Locked to 10s
     var cycleIntervalSeconds by mutableStateOf(CYCLE_INTERVAL_SECONDS_LOCKED)
         private set
 
@@ -258,24 +262,30 @@ class ChatboxViewModel(
     var spotifyPreset by mutableStateOf(1)
         private set
 
-    // ✅ Locked to 2s (no UI control anymore)
+    // ✅ Locked to 2s
     var musicRefreshSeconds by mutableStateOf(MUSIC_REFRESH_SECONDS_LOCKED)
         private set
 
     private var nowPlayingJob: Job? = null
 
-    // ---- Now Playing inference (robust, debounced) ----
+    // ---- Robust pause/progress inference with virtual clock (fast skipping safe) ----
     private enum class PlaybackConfidence { PLAYING, PAUSED, UNKNOWN }
-
     private var playbackConfidence: PlaybackConfidence = PlaybackConfidence.UNKNOWN
-    private var lastTrackKey: String = ""
 
+    private var lastTrackKey: String = ""
+    private var lastTrackChangeAtElapsedMs: Long = 0L
+
+    // Virtual position clock (continues even if notifications freeze position)
+    private var virtualBasePosMs: Long = 0L
+    private var virtualBaseAtElapsedMs: Long = 0L
+
+    // Sampling for confidence
     private var lastSamplePosMs: Long = 0L
     private var lastSampleAtElapsedMs: Long = 0L
     private var lastMovementAtElapsedMs: Long = 0L
     private var unknownSinceElapsedMs: Long = 0L
 
-    // Keep latest snapshot so we can infer between notification updates
+    // Latest snapshot cache
     private var npTitleRaw: String = ""
     private var npArtistRaw: String = ""
     private var npDurationMs: Long = 0L
@@ -358,14 +368,12 @@ class ChatboxViewModel(
             }
         }
 
-        // ✅ Preserve exact user text when loading cycle lines.
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
                 setCycleLinesFromTextPreserve(text)
             }
         }
 
-        // ✅ Always enforce locked value at runtime.
         viewModelScope.launch {
             userPreferencesRepository.cycleInterval.collect {
                 cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
@@ -415,7 +423,7 @@ class ChatboxViewModel(
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
 
-                // cache snapshot for inference between notification updates
+                // cache snapshot
                 npTitleRaw = s.title
                 npArtistRaw = s.artist
                 npDurationMs = s.durationMs
@@ -425,7 +433,6 @@ class ChatboxViewModel(
                 npReportedIsPlaying = s.isPlaying
                 npDetected = s.detected
 
-                // update inference from this snapshot
                 updatePlaybackConfidenceFromSnapshot()
 
                 nowPlayingIsPlaying = (playbackConfidence == PlaybackConfidence.PLAYING)
@@ -512,7 +519,7 @@ class ChatboxViewModel(
     // =========================
     private fun setCycleLinesFromTextPreserve(text: String) {
         val raw = text.split("\n")
-        val lines = raw.take(10) // keep slots stable; UI already caps at 10
+        val lines = raw.take(10)
         cycleLines.clear()
         cycleLines.addAll(lines)
         rebuildCombinedPreviewOnly()
@@ -705,7 +712,7 @@ class ChatboxViewModel(
                 val now = System.currentTimeMillis()
                 val nextAllowed = lastCombinedSendMs + SEND_FLOOR_MS
                 val waitMs = max(0L, nextAllowed - now)
-                if (waitMs > 0L) delay(waitMs + 25L) // scheduler slack
+                if (waitMs > 0L) delay(waitMs + 25L)
 
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
                 delay(10L)
@@ -797,7 +804,7 @@ class ChatboxViewModel(
     // Now Playing builder
     // =========================
     private fun buildNowPlayingLines(): List<String> {
-        // Update inference even if the notification hasn't refreshed yet (fixes frozen progress / stuck pause)
+        // Update inference on every build (fixes frozen progress when notifications don't update)
         updatePlaybackConfidenceFromSnapshot()
         nowPlayingIsPlaying = (playbackConfidence == PlaybackConfidence.PLAYING)
 
@@ -809,9 +816,9 @@ class ChatboxViewModel(
         val safeTitle = title.takeIf { it != "(blank)" } ?: ""
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
-        // If "artist — title" would likely exceed 2 lines, drop artist (your request).
         val maxLine = 42
         val twoLineBudget = maxLine * 2
+
         val combinedName = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
         val preferNoArtist = safeArtist.isNotBlank() && combinedName.length > twoLineBudget
 
@@ -825,8 +832,9 @@ class ChatboxViewModel(
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
 
-        // Use elapsedRealtime-based projection ONLY for the bar/time display.
-        val pos = estimatePositionMs(
+        // IMPORTANT: use virtual clock fallback so progress moves during rapid skips
+        val pos = estimatePositionMsWithVirtualFallback(
+            trackKey = lastTrackKey,
             positionMs = posSnapshot,
             positionUpdateElapsedMs = nowPlayingPositionUpdateTimeMs,
             speed = nowPlayingSpeed,
@@ -834,7 +842,7 @@ class ChatboxViewModel(
             reportedIsPlaying = npReportedIsPlaying
         )
 
-        // bar animates when not confidently paused; "Paused" text only when confidently paused
+        // Bar animates unless we are confidently paused
         val barIsPlaying = playbackConfidence != PlaybackConfidence.PAUSED
 
         val bar = renderProgressBar(
@@ -853,7 +861,13 @@ class ChatboxViewModel(
         return listOfNotNull(line1.takeIf { it.isNotBlank() }, line2.takeIf { it.isNotBlank() }, line3)
     }
 
-    private fun estimatePositionMs(
+    /**
+     * If notifications stop updating position (common when skipping fast),
+     * we keep our own "virtual" position clock moving while reportedIsPlaying is true
+     * (and during the grace window after a track change).
+     */
+    private fun estimatePositionMsWithVirtualFallback(
+        trackKey: String,
         positionMs: Long,
         positionUpdateElapsedMs: Long,
         speed: Float,
@@ -861,13 +875,46 @@ class ChatboxViewModel(
         reportedIsPlaying: Boolean
     ): Long {
         val dur = max(1L, durationMs)
-        if (!reportedIsPlaying || speed <= 0.01f || positionUpdateElapsedMs <= 0L) {
-            return positionMs.coerceIn(0L, dur)
-        }
         val nowElapsed = SystemClock.elapsedRealtime()
-        val elapsed = max(0L, nowElapsed - positionUpdateElapsedMs)
-        val adj = (elapsed * speed).toLong()
-        return (positionMs + adj).coerceIn(0L, dur)
+
+        // Try "official" projection first if we have a valid update time.
+        val canProjectOfficial = (positionUpdateElapsedMs > 0L && reportedIsPlaying && speed > 0.01f)
+        val official = if (canProjectOfficial) {
+            val elapsed = max(0L, nowElapsed - positionUpdateElapsedMs)
+            (positionMs + (elapsed * speed).toLong()).coerceIn(0L, dur)
+        } else null
+
+        // Decide if official seems usable: if positionUpdateElapsedMs is stale, it won't help.
+        // Treat as stale if it's older than ~12s.
+        val officialStale = if (positionUpdateElapsedMs > 0L) (nowElapsed - positionUpdateElapsedMs) > 12_000L else true
+
+        val inGrace = (nowElapsed - lastTrackChangeAtElapsedMs) <= TRACK_CHANGE_GRACE_MS
+        val shouldRunVirtual = (reportedIsPlaying || inGrace)
+
+        // If official is good and not stale, use it and also resync virtual base to it.
+        if (official != null && !officialStale) {
+            // Resync virtual base so virtual stays aligned
+            virtualBasePosMs = official
+            virtualBaseAtElapsedMs = nowElapsed
+            return official
+        }
+
+        // Otherwise: virtual fallback (keeps moving during rapid skipping)
+        if (shouldRunVirtual) {
+            // If we changed track but trackKey isn't set yet, still move from current position
+            // Ensure virtual base is initialized for this track
+            if (virtualBaseAtElapsedMs == 0L) {
+                virtualBasePosMs = positionMs.coerceIn(0L, dur)
+                virtualBaseAtElapsedMs = nowElapsed
+            }
+
+            val elapsed = max(0L, nowElapsed - virtualBaseAtElapsedMs)
+            val s = if (speed > 0.01f) speed else 1f
+            return (virtualBasePosMs + (elapsed * s).toLong()).coerceIn(0L, dur)
+        }
+
+        // If not playing and not in grace, just return snapshot
+        return positionMs.coerceIn(0L, dur)
     }
 
     // =========================
@@ -878,7 +925,7 @@ class ChatboxViewModel(
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // Love (10 chars total)
+            1 -> {
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -886,7 +933,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> { // Minimal (10 chars)
+            2 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -894,7 +941,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // Crystal (10 chars) ✅ keep ⟡ exactly
+            3 -> { // ✅ Crystal stays ⟡
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -904,7 +951,7 @@ class ChatboxViewModel(
 
             4 -> renderSoundwaveBar(p, posMs, isPlaying)
 
-            else -> { // Geometry (10 chars)
+            else -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -934,13 +981,6 @@ class ChatboxViewModel(
 
     private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
-    /**
-     * ✅ EXACT LENGTH = 10 chars total:
-     * - 8 wave chars
-     * - plus "[" and "]" around the progress index → +2
-     *
-     * ✅ Marker change (soundwave only): use a "techy square" ▣ inside the brackets.
-     */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
         val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
@@ -961,7 +1001,7 @@ class ChatboxViewModel(
         for (i in 0 until slots) {
             if (i == idx) {
                 out.append('[')
-                out.append('▣')
+                out.append('▣') // ✅ square marker (soundwave only)
                 out.append(']')
             } else {
                 out.append(chars[i])
@@ -988,11 +1028,6 @@ class ChatboxViewModel(
         return "${m}:${s.toString().padStart(2, '0')}"
     }
 
-    /**
-     * ✅ Enforces:
-     * - maxLines (e.g. 9)
-     * - maxChars (e.g. 144), counting '\n' between lines
-     */
     private fun joinWithLimits(lines: List<String>, maxChars: Int, maxLines: Int): String {
         if (lines.isEmpty()) return ""
 
@@ -1003,7 +1038,7 @@ class ChatboxViewModel(
         var total = 0
 
         for (line in clean) {
-            val add = if (out.isEmpty()) line.length else (1 + line.length) // +1 for '\n'
+            val add = if (out.isEmpty()) line.length else (1 + line.length)
             if (total + add > maxChars) {
                 val remain = maxChars - total - (if (out.isEmpty()) 0 else 1)
                 if (remain >= 2) out.add(line.take(remain - 1) + "…")
@@ -1031,9 +1066,9 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Robust pause/unpause inference (NO forced play on track change)
+    // Playback inference: movement-based, but fast-skip-safe + virtual clock
     // =========================
-    private fun resetPlaybackTracking(nowElapsed: Long, startPosMs: Long) {
+    private fun resetSampling(nowElapsed: Long, startPosMs: Long) {
         lastSampleAtElapsedMs = nowElapsed
         lastSamplePosMs = startPosMs
         lastMovementAtElapsedMs = nowElapsed
@@ -1050,27 +1085,41 @@ class ChatboxViewModel(
         val key = "${npTitleRaw.trim()}|${npArtistRaw.trim()}|$npDurationMs"
         val trackChanged = key != lastTrackKey && (npTitleRaw.isNotBlank() || npArtistRaw.isNotBlank())
 
-        // Use projected position for sampling (helps when notifications are sparse)
-        val estPos = estimatePositionMs(
+        if (trackChanged) {
+            lastTrackKey = key
+            lastTrackChangeAtElapsedMs = nowElapsed
+
+            // Initialize virtual clock for new track immediately
+            virtualBasePosMs = npPositionMs.coerceIn(0L, max(1L, npDurationMs))
+            virtualBaseAtElapsedMs = nowElapsed
+
+            playbackConfidence = PlaybackConfidence.UNKNOWN
+            resetSampling(nowElapsed, virtualBasePosMs)
+            return
+        }
+
+        // If no sampling history yet
+        if (lastSampleAtElapsedMs == 0L) {
+            // keep virtual clock alive
+            if (virtualBaseAtElapsedMs == 0L) {
+                virtualBasePosMs = npPositionMs.coerceIn(0L, max(1L, npDurationMs))
+                virtualBaseAtElapsedMs = nowElapsed
+            }
+            playbackConfidence = PlaybackConfidence.UNKNOWN
+            resetSampling(nowElapsed, virtualBasePosMs)
+            return
+        }
+
+        // Use our position estimator (with virtual fallback) for movement detection
+        val dur = max(1L, npDurationMs)
+        val estPos = estimatePositionMsWithVirtualFallback(
+            trackKey = lastTrackKey,
             positionMs = npPositionMs,
             positionUpdateElapsedMs = npPositionUpdateElapsedMs,
             speed = npSpeed,
-            durationMs = max(1L, npDurationMs),
+            durationMs = dur,
             reportedIsPlaying = npReportedIsPlaying
         )
-
-        if (trackChanged) {
-            lastTrackKey = key
-            playbackConfidence = PlaybackConfidence.UNKNOWN // ✅ do NOT force PLAYING here
-            resetPlaybackTracking(nowElapsed, estPos)
-            return
-        }
-
-        if (lastSampleAtElapsedMs == 0L) {
-            resetPlaybackTracking(nowElapsed, estPos)
-            playbackConfidence = PlaybackConfidence.UNKNOWN
-            return
-        }
 
         val dt = max(1L, nowElapsed - lastSampleAtElapsedMs)
         val dp = estPos - lastSamplePosMs
@@ -1078,36 +1127,42 @@ class ChatboxViewModel(
         lastSampleAtElapsedMs = nowElapsed
         lastSamplePosMs = estPos
 
-        // Movement threshold (sampled around every 2s): if we advanced ~0.7s, it's definitely playing
+        // Movement threshold tuned for ~2s sampling
         val movedEnough = dp >= 700L
 
         if (movedEnough) {
             playbackConfidence = PlaybackConfidence.PLAYING
             lastMovementAtElapsedMs = nowElapsed
+            // resync virtual base so it doesn't drift
+            virtualBasePosMs = estPos
+            virtualBaseAtElapsedMs = nowElapsed
+            return
+        }
+
+        val inGrace = (nowElapsed - lastTrackChangeAtElapsedMs) <= TRACK_CHANGE_GRACE_MS
+        if (inGrace) {
+            // during grace: never call it PAUSED just because position updates are missing
+            playbackConfidence = PlaybackConfidence.UNKNOWN
             return
         }
 
         val noMoveFor = nowElapsed - lastMovementAtElapsedMs
 
-        // If no confirmed movement for long enough -> PAUSED
+        // If system explicitly says playing, don't declare paused unless it's been a LONG time with zero movement
+        if (npReportedIsPlaying) {
+            if (noMoveFor >= 18_000L) playbackConfidence = PlaybackConfidence.PAUSED
+            else playbackConfidence = PlaybackConfidence.UNKNOWN
+            return
+        }
+
+        // If system says not playing, we can settle to PAUSED after a short window
         if (noMoveFor >= 4_500L) {
             playbackConfidence = PlaybackConfidence.PAUSED
             return
         }
 
-        // Otherwise stay UNKNOWN unless we were already PLAYING and the system still claims playing
-        if (playbackConfidence == PlaybackConfidence.PLAYING && npReportedIsPlaying) {
-            playbackConfidence = PlaybackConfidence.PLAYING
-        } else if (playbackConfidence == PlaybackConfidence.PAUSED && npReportedIsPlaying) {
-            // don't instantly unpause on lies; wait for movement
-            playbackConfidence = PlaybackConfidence.UNKNOWN
-            unknownSinceElapsedMs = nowElapsed
-        } else {
-            // keep UNKNOWN during track transitions/buffering
-            if (playbackConfidence == PlaybackConfidence.UNKNOWN && (nowElapsed - unknownSinceElapsedMs) > 15_000L) {
-                // safety: if we sit UNKNOWN forever with no movement, fall back to PAUSED
-                playbackConfidence = PlaybackConfidence.PAUSED
-            }
+        if (playbackConfidence == PlaybackConfidence.UNKNOWN && (nowElapsed - unknownSinceElapsedMs) > 20_000L) {
+            playbackConfidence = PlaybackConfidence.PAUSED
         }
     }
 }
