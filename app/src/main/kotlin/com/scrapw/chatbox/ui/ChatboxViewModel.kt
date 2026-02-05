@@ -43,7 +43,6 @@ class ChatboxViewModel(
     companion object {
         private lateinit var instance: ChatboxViewModel
 
-        // ✅ Locked delays (per your request)
         private const val CYCLE_INTERVAL_SECONDS_LOCKED = 10
         private const val MUSIC_REFRESH_SECONDS_LOCKED = 2
 
@@ -279,10 +278,10 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
-    // PlaybackState hint from listener (NOT trusted alone)
+    // listener hint (not trusted alone)
     private var nowPlayingIsPlayingHint by mutableStateOf(false)
 
-    // ✅ Motion-truth playing flag (trusted)
+    // ✅ final (trusted) play state used for OSC
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
 
@@ -291,14 +290,14 @@ class ChatboxViewModel(
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
 
-    // Motion tracker
+    // motion tracking
     private var lastMotionCheckElapsedMs: Long = 0L
     private var lastMotionPosMs: Long = 0L
     private var lastMotionPlaying: Boolean = false
 
-    // Track-change tracker (THIS fixes: skip/back causes "Paused" to stick)
+    // track change detection + anti-stuck hold
     private var lastTrackKey: String = ""
-    private var lastTrackChangeElapsedMs: Long = 0L
+    private var trackChangeHoldUntilElapsedMs: Long = 0L
 
     var debugLastAfkOsc by mutableStateOf("")
         private set
@@ -389,11 +388,11 @@ class ChatboxViewModel(
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingIsPlayingHint = s.isPlaying
 
-                // ✅ Detect track change immediately (title/artist change OR position jumps backwards)
+                // ✅ MUST run BEFORE motion inference
                 handleTrackChangeIfNeeded()
 
-                // ✅ Update play state (motion + track-change grace)
-                updateNowPlayingIsPlayingFromMotion()
+                // ✅ Stable play detection (won’t stick paused after skip/back)
+                updateNowPlayingIsPlayingStable()
 
                 rebuildCombinedPreviewOnly()
             }
@@ -410,23 +409,23 @@ class ChatboxViewModel(
         val artist = lastNowPlayingArtist.takeIf { it != "(blank)" } ?: ""
         val key = "$artist|$title|${nowPlayingDurationMs}"
 
-        // Predict current position for comparisons
+        // Predict position (for jump detection)
         val dur = max(1L, nowPlayingDurationMs)
-        val posSnapshot = nowPlayingPositionMs
         val lastUpdate = if (nowPlayingPositionUpdateTimeMs > 0L) nowPlayingPositionUpdateTimeMs else now
         val elapsed = max(0L, now - lastUpdate)
         val adj = (elapsed * nowPlayingSpeed).toLong()
-        val predicted = (posSnapshot + max(0L, adj)).coerceIn(0L, dur)
+        val predicted = (nowPlayingPositionMs + max(0L, adj)).coerceIn(0L, dur)
 
-        // If metadata changed OR we jumped backwards a lot => new track / seek / skip
         val metadataChanged = (key.isNotBlank() && key != lastTrackKey)
         val jumpedBackHard = (lastMotionCheckElapsedMs != 0L && (predicted - lastMotionPosMs) < -1200L)
 
         if (metadataChanged || jumpedBackHard) {
             lastTrackKey = key
-            lastTrackChangeElapsedMs = now
 
-            // Reset motion baseline to avoid “stuck paused after skip”
+            // ✅ Hold "playing" briefly after track change to prevent false Paused latch
+            trackChangeHoldUntilElapsedMs = now + 3200L
+
+            // Reset motion baseline so we don’t compare new track to old track
             lastMotionCheckElapsedMs = 0L
             lastMotionPosMs = 0L
             lastMotionPlaying = true
@@ -435,39 +434,35 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Motion-based pause/unpause detection (fixed for skip/back)
+    // Stable play detection (FIX: skip/back pauses and gets stuck)
     // =========================
-    private fun updateNowPlayingIsPlayingFromMotion() {
+    private fun updateNowPlayingIsPlayingStable() {
         val now = SystemClock.elapsedRealtime()
 
         val dur = max(1L, nowPlayingDurationMs)
-        val posSnapshot = nowPlayingPositionMs
         val lastUpdate = if (nowPlayingPositionUpdateTimeMs > 0L) nowPlayingPositionUpdateTimeMs else now
-
         val elapsed = max(0L, now - lastUpdate)
         val adj = (elapsed * nowPlayingSpeed).toLong()
-        val predicted = (posSnapshot + max(0L, adj)).coerceIn(0L, dur)
+        val predicted = (nowPlayingPositionMs + max(0L, adj)).coerceIn(0L, dur)
 
-        // If we don't have history yet, start from a sensible state
+        // Seed
         if (lastMotionCheckElapsedMs == 0L) {
             lastMotionCheckElapsedMs = now
             lastMotionPosMs = predicted
 
-            // Right after a track change, default to "playing" unless we get strong evidence otherwise.
-            val inGrace = (now - lastTrackChangeElapsedMs) <= 2200L
-            val seed = if (inGrace) true else nowPlayingIsPlayingHint
-
+            // During hold, force playing.
+            val seed = if (now < trackChangeHoldUntilElapsedMs) true else nowPlayingIsPlayingHint
             lastMotionPlaying = seed
             nowPlayingIsPlaying = seed
             return
         }
 
         val dt = now - lastMotionCheckElapsedMs
-        val delta = predicted - lastMotionPosMs // SIGNED (important)
-        val inGrace = (now - lastTrackChangeElapsedMs) <= 2200L
+        val delta = predicted - lastMotionPosMs
 
-        // Treat a big negative jump as track-change/seek; don’t latch paused.
+        // If we jumped backwards hard, treat as seek/track-change and never mark paused from it.
         if (delta < -1200L) {
+            trackChangeHoldUntilElapsedMs = max(trackChangeHoldUntilElapsedMs, now + 2600L)
             lastMotionCheckElapsedMs = now
             lastMotionPosMs = predicted
             lastMotionPlaying = true
@@ -475,19 +470,30 @@ class ChatboxViewModel(
             return
         }
 
-        // Movement thresholds (forward movement only)
+        // Forward movement evidence (motion truth)
         val movedForward =
             (dt >= 650L && delta >= 250L) ||
             (dt >= 1100L && delta >= 180L)
 
-        // Key fix: during grace window after skip/back, allow hint to unpause instantly.
+        // ✅ Anti-stuck rule:
+        // While we’re inside the track-change hold window, DO NOT allow "Paused" unless it’s *very* explicit.
+        val inHold = now < trackChangeHoldUntilElapsedMs
+
+        // Explicit pause evidence:
+        // - listener says not playing
+        // - speed is 0 (many apps set this on pause)
+        // - and position basically not moving for long enough
+        val essentiallyStill = (dt >= 1200L && abs(delta) <= 80L)
+        val explicitPaused = (!nowPlayingIsPlayingHint && nowPlayingSpeed == 0f && essentiallyStill)
+
         val inferred = when {
             movedForward -> true
-            inGrace && nowPlayingIsPlayingHint -> true
-            else -> false
+            inHold -> true // <- core fix: don’t latch paused during skip/back transitions
+            explicitPaused -> false
+            else -> nowPlayingIsPlayingHint // fallback
         }
 
-        // Small dt = don’t flicker
+        // Flicker guard
         val finalState = if (dt < 450L) lastMotionPlaying else inferred
 
         nowPlayingIsPlaying = finalState
@@ -764,8 +770,7 @@ class ChatboxViewModel(
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
-                // ✅ keep re-evaluating motion in the loop too
-                updateNowPlayingIsPlayingFromMotion()
+                updateNowPlayingIsPlayingStable()
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
                 delay(MUSIC_REFRESH_SECONDS_LOCKED.toLong() * 1000L)
             }
@@ -779,7 +784,7 @@ class ChatboxViewModel(
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
-        updateNowPlayingIsPlayingFromMotion()
+        updateNowPlayingIsPlayingStable()
         rebuildAndMaybeSendCombined(forceSend = true, local = local)
     }
 
@@ -866,7 +871,6 @@ class ChatboxViewModel(
         val safeTitle = title.takeIf { it != "(blank)" } ?: ""
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
-        // ✅ If "artist — title" would exceed ~2 lines, drop artist
         val maxLineChars = 42
         val maxTwoLines = maxLineChars * 2
 
@@ -936,7 +940,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // ✅ Crystal restored: ⟡
+            3 -> { // Crystal: ⟡
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -976,13 +980,6 @@ class ChatboxViewModel(
 
     private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
-    /**
-     * 10 chars total:
-     * - 8 wave chars
-     * - +2 brackets around the marker slot
-     *
-     * Marker: [▣]
-     */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
         val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
@@ -1064,6 +1061,116 @@ class ChatboxViewModel(
         if (addToConversation) {
             conversationUiState.addMessage(Message(text, false, Instant.now()))
         }
+    }
+
+    // =========================
+    // AFK / Cycle / NowPlaying senders
+    // =========================
+    fun startAfkSender(local: Boolean = false) {
+        if (!afkEnabled) return
+        afkJob?.cancel()
+        afkJob = viewModelScope.launch {
+            while (afkEnabled) {
+                rebuildAndMaybeSendCombined(forceSend = true, local = local)
+                delay(afkForcedIntervalSeconds * 1000L)
+            }
+        }
+    }
+
+    fun stopAfkSender(clearFromChatbox: Boolean) {
+        afkJob?.cancel()
+        afkJob = null
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+    }
+
+    fun sendAfkNow(local: Boolean = false) {
+        rebuildAndMaybeSendCombined(forceSend = true, local = local)
+    }
+
+    fun startCycle(local: Boolean = false) {
+        val msgs = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10)
+        if (!cycleEnabled || msgs.isEmpty()) return
+
+        viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(true) }
+        persistCycleLinesPreserve()
+        cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
+
+        cycleJob?.cancel()
+        cycleJob = viewModelScope.launch {
+            cycleIndex = 0
+            while (cycleEnabled) {
+                rebuildAndMaybeSendCombined(
+                    forceSend = true,
+                    local = local,
+                    cycleLineOverride = msgs[cycleIndex % msgs.size]
+                )
+                cycleIndex = (cycleIndex + 1) % msgs.size
+                delay(CYCLE_INTERVAL_SECONDS_LOCKED.toLong() * 1000L)
+            }
+        }
+    }
+
+    fun stopCycle(clearFromChatbox: Boolean) {
+        cycleJob?.cancel()
+        cycleJob = null
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+    }
+
+    fun startNowPlayingSender(local: Boolean = false) {
+        if (!spotifyEnabled) return
+        nowPlayingJob?.cancel()
+        nowPlayingJob = viewModelScope.launch {
+            while (spotifyEnabled) {
+                updateNowPlayingIsPlayingStable()
+                rebuildAndMaybeSendCombined(forceSend = true, local = local)
+                delay(MUSIC_REFRESH_SECONDS_LOCKED.toLong() * 1000L)
+            }
+        }
+    }
+
+    fun stopNowPlayingSender(clearFromChatbox: Boolean) {
+        nowPlayingJob?.cancel()
+        nowPlayingJob = null
+        if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+    }
+
+    fun sendNowPlayingOnce(local: Boolean = false) {
+        updateNowPlayingIsPlayingStable()
+        rebuildAndMaybeSendCombined(forceSend = true, local = local)
+    }
+
+    fun stopAll(clearFromChatbox: Boolean) {
+        stopCycle(clearFromChatbox = false)
+        stopNowPlayingSender(clearFromChatbox = false)
+        stopAfkSender(clearFromChatbox = false)
+        if (clearFromChatbox) clearChatbox()
+    }
+
+    private fun rebuildAndMaybeSendCombined(
+        forceSend: Boolean,
+        local: Boolean = false,
+        cycleLineOverride: String? = null,
+        forceClearIfAllOff: Boolean = false
+    ) {
+        val combined = buildCombinedText(cycleLineOverride)
+
+        if (forceClearIfAllOff && combined.isBlank()) {
+            clearChatbox(local)
+            combinedPreviewText = ""
+            return
+        }
+
+        combinedPreviewText = combined
+        if (!forceSend) return
+        if (combined.isBlank()) return
+
+        val nowMs = System.currentTimeMillis()
+        val minMs = 2_000L
+        if (nowMs - lastCombinedSendMs < minMs) return
+
+        sendToVrchatRaw(combined, local, addToConversation = false)
+        lastCombinedSendMs = nowMs
     }
 }
 
