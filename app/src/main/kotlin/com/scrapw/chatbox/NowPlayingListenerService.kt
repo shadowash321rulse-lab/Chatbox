@@ -45,7 +45,7 @@ class NowPlayingListenerService : NotificationListenerService() {
         if (allowedPackages.isNotEmpty() && pkg !in allowedPackages) return
 
         // HARD FILTER: only accept real media notifications (must have a MediaSession token)
-        val token: MediaSession.Token? = getMediaSessionToken(extras) ?: return
+        val token = getMediaSessionToken(extras) ?: return
 
         try {
             val controller = MediaController(this, token)
@@ -60,10 +60,10 @@ class NowPlayingListenerService : NotificationListenerService() {
             val lastUpdate = pb?.lastPositionUpdateTime ?: 0L
             val speed = pb?.playbackSpeed ?: 1f
 
-            // Still store the raw PlaybackState flag (VM will infer "playing" from movement)
+            // Raw PlaybackState flag (VM can infer paused from movement if needed)
             val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
 
-            // IMPORTANT: lastPositionUpdateTime is based on elapsedRealtime.
+            // lastPositionUpdateTime is based on elapsedRealtime.
             val snapshotUpdateTime = if (lastUpdate > 0L) lastUpdate else SystemClock.elapsedRealtime()
 
             val detected = title.isNotBlank() || artist.isNotBlank()
