@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -48,6 +49,10 @@ class ChatboxViewModel(
         // ✅ Locked delays (per your request)
         private const val CYCLE_INTERVAL_SECONDS_LOCKED = 10
         private const val MUSIC_REFRESH_SECONDS_LOCKED = 2
+
+        // ✅ Combined limits (per your request)
+        private const val COMBINED_MAX_CHARS = 144
+        private const val COMBINED_MAX_LINES = 9
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -285,23 +290,21 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
-    // Raw playbackState from notifications
+    // ✅ We will override this based on progress movement
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
-
-    // ✅ Derived playback: fixes "Paused sticks after skipping songs"
-    private var derivedIsPlaying: Boolean = false
 
     private var nowPlayingDurationMs: Long = 0L
     private var nowPlayingPositionMs: Long = 0L
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
 
-    // For movement detection + track-change grace
-    private var lastRawPosMs: Long = 0L
-    private var lastRawUpdateTimeMs: Long = 0L
+    // ✅ Progress-movement inference fields
+    private var lastPosSampleMs: Long = -1L
+    private var lastPosSampleAtElapsed: Long = 0L
+    private var noMoveStreak: Int = 0
+    private var trackChangeGraceUntilElapsed: Long = 0L
     private var lastTrackKey: String = ""
-    private var lastTrackChangeElapsedMs: Long = 0L
 
     var debugLastAfkOsc by mutableStateOf("")
         private set
@@ -341,14 +344,12 @@ class ChatboxViewModel(
         }
 
         // ✅ IMPORTANT FIX (cursor jump):
-        // Do NOT trim/normalize user text when loading cycle lines.
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
                 setCycleLinesFromTextPreserve(text)
             }
         }
 
-        // ✅ Always enforce locked cycle interval
         viewModelScope.launch {
             userPreferencesRepository.cycleInterval.collect {
                 cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
@@ -378,9 +379,14 @@ class ChatboxViewModel(
             }
         }
 
-        viewModelScope.launch { userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it } }
-        viewModelScope.launch { userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it } }
+        viewModelScope.launch {
+            userPreferencesRepository.afkPresetsCollapsed.collect { afkPresetsCollapsed = it }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
+        }
 
+        // ✅ Core: infer playing from progress movement + track-change grace
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -393,58 +399,56 @@ class ChatboxViewModel(
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
-                nowPlayingIsPlaying = s.isPlaying
 
-                updateDerivedPlaybackState()
+                val nowElapsed = SystemClock.elapsedRealtime()
+
+                // Track key for skip/next/back detection
+                val trackKey = buildString {
+                    append(activePackage); append('|')
+                    append(s.title); append('|')
+                    append(s.artist); append('|')
+                    append(s.durationMs)
+                }
+                if (trackKey != lastTrackKey) {
+                    lastTrackKey = trackKey
+                    // Give a short "playing" grace so Paused doesn't stick during metadata churn
+                    trackChangeGraceUntilElapsed = nowElapsed + 1200L
+                    // Reset movement tracking so we don't treat new song as "stuck paused"
+                    lastPosSampleMs = -1L
+                    lastPosSampleAtElapsed = nowElapsed
+                    noMoveStreak = 0
+                }
+
+                // Movement inference:
+                val dt = (nowElapsed - lastPosSampleAtElapsed).coerceAtLeast(0L)
+                val movedEnough = if (lastPosSampleMs >= 0L) {
+                    val dp = abs(s.positionMs - lastPosSampleMs)
+                    // require a meaningful change OR time delta big enough to trust samples
+                    (dp >= 250L && dt >= 350L)
+                } else {
+                    false
+                }
+
+                if (movedEnough) {
+                    noMoveStreak = 0
+                } else {
+                    // only count as "not moving" if we've waited long enough for an update
+                    if (dt >= 500L) noMoveStreak++
+                }
+
+                val inferredPlaying = (nowElapsed < trackChangeGraceUntilElapsed) || (noMoveStreak <= 1 && movedEnough)
+
+                // If we haven't seen movement for multiple samples, force paused
+                nowPlayingIsPlaying = if (noMoveStreak >= 3) false else inferredPlaying
+
+                // Update samples
+                if (dt >= 250L) {
+                    lastPosSampleMs = s.positionMs
+                    lastPosSampleAtElapsed = nowElapsed
+                }
+
                 rebuildCombinedPreviewOnly()
             }
-        }
-    }
-
-    // =========================
-    // Derived playback (progress-moving-based)
-    // =========================
-    private fun makeTrackKey(): String {
-        val pkg = activePackage
-        val t = lastNowPlayingTitle
-        val a = lastNowPlayingArtist
-        val d = nowPlayingDurationMs
-        return "$pkg|$d|$a|$t"
-    }
-
-    private fun updateDerivedPlaybackState() {
-        val nowElapsed = SystemClock.elapsedRealtime()
-
-        val key = makeTrackKey()
-        val trackLooksValid = (lastNowPlayingTitle != "(blank)" && lastNowPlayingTitle.isNotBlank()) ||
-            (lastNowPlayingArtist != "(blank)" && lastNowPlayingArtist.isNotBlank())
-
-        // Track-change grace: avoid "Paused" sticking during metadata swaps / skips.
-        if (trackLooksValid && key != lastTrackKey) {
-            lastTrackKey = key
-            lastTrackChangeElapsedMs = nowElapsed
-            // reset movement sampler so first update doesn't falsely "stick"
-            lastRawPosMs = nowPlayingPositionMs
-            lastRawUpdateTimeMs = nowPlayingPositionUpdateTimeMs
-        }
-
-        // Movement detection: if position updates and actually moves, treat as playing.
-        var moved = false
-        if (nowPlayingPositionUpdateTimeMs != 0L && nowPlayingPositionUpdateTimeMs != lastRawUpdateTimeMs) {
-            val dp = nowPlayingPositionMs - lastRawPosMs
-            // > ~0.35s movement is "definitely playing"
-            moved = dp > 350L
-            lastRawPosMs = nowPlayingPositionMs
-            lastRawUpdateTimeMs = nowPlayingPositionUpdateTimeMs
-        }
-
-        val inGrace = (nowElapsed - lastTrackChangeElapsedMs) < 2500L
-
-        derivedIsPlaying = when {
-            nowPlayingIsPlaying -> true
-            moved -> true
-            inGrace && trackLooksValid -> true
-            else -> false
         }
     }
 
@@ -660,7 +664,7 @@ class ChatboxViewModel(
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
-                delay(12_000L)
+                delay(afkForcedIntervalSeconds * 1000L)
             }
         }
     }
@@ -788,7 +792,7 @@ class ChatboxViewModel(
         if (cycleLine.isNotBlank()) lines += cycleLine
         lines.addAll(musicLines)
 
-        val combined = joinWithLimit(lines, 144)
+        val combined = joinWithLimitAndLines(lines, COMBINED_MAX_CHARS, COMBINED_MAX_LINES)
         debugLastCombinedOsc = combined
         return combined
     }
@@ -815,20 +819,24 @@ class ChatboxViewModel(
         val safeTitle = title.takeIf { it != "(blank)" } ?: ""
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
+        // line width heuristic (VRChat-ish)
         val maxLine = 42
+        val maxTwoLines = maxLine * 2
+
+        // ✅ If "artist — title" is likely to exceed 2 lines, drop artist (keep title)
         val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
+        val useArtist = safeArtist.isNotBlank() && combined.length <= maxTwoLines
+        val line1Source = if (useArtist) combined else safeTitle
+
         val line1 = when {
-            combined.length <= maxLine -> combined
-            safeTitle.length <= maxLine -> safeTitle
-            else -> safeTitle.take(maxLine - 1) + "…"
+            line1Source.length <= maxLine -> line1Source
+            else -> line1Source.take(maxLine - 1) + "…"
         }.trim()
 
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
 
-        val playing = derivedIsPlaying
-
-        val pos = if (playing && dur > 0L) {
+        val pos = if (nowPlayingIsPlaying && dur > 0L) {
             val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
             val adj = (elapsed * nowPlayingSpeed).toLong()
             (posSnapshot + max(0L, adj)).coerceAtMost(dur)
@@ -840,11 +848,11 @@ class ChatboxViewModel(
             preset = spotifyPreset,
             posMs = pos,
             durMs = max(1L, dur),
-            isPlaying = playing
+            isPlaying = nowPlayingIsPlaying
         )
 
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        val status = if (!playing) "Paused" else ""
+        val status = if (!nowPlayingIsPlaying) "Paused" else ""
 
         val line2 = listOf(bar, time).joinToString(" ").trim()
         val line3 = status.takeIf { it.isNotBlank() }
@@ -876,7 +884,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // Crystal (10 chars)
+            3 -> { // ✅ Crystal (keep ⟡)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -884,7 +892,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ soundwave uses square marker
+            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ square marker only here
 
             else -> { // Geometry (10 chars)
                 val slots = 10
@@ -918,9 +926,9 @@ class ChatboxViewModel(
 
     /**
      * ✅ EXACT LENGTH = 10 chars total:
-     * - 8 wave chars
-     * - plus "[" and "]" around the progress index → +2
-     * ✅ Marker inside brackets is square: uses ▣
+     * - 8 wave slots
+     * - brackets around progress slot
+     * ✅ Progress marker is a square: ■ (only for soundwave)
      */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
@@ -940,10 +948,13 @@ class ChatboxViewModel(
 
         val out = StringBuilder(10)
         for (i in 0 until slots) {
-            if (i == idx) out.append('[')
-            // replace the tracked "dot" with square marker at the index
-            out.append(if (i == idx) '▣' else chars[i])
-            if (i == idx) out.append(']')
+            if (i == idx) {
+                out.append('[')
+                out.append('■') // ✅ square marker
+                out.append(']')
+            } else {
+                out.append(chars[i])
+            }
         }
         return out.toString()
     }
@@ -966,7 +977,8 @@ class ChatboxViewModel(
         return "${m}:${s.toString().padStart(2, '0')}"
     }
 
-    private fun joinWithLimit(lines: List<String>, limit: Int): String {
+    // ✅ 144 chars + 9 lines enforced here (combined always goes through this)
+    private fun joinWithLimitAndLines(lines: List<String>, maxChars: Int, maxLines: Int): String {
         if (lines.isEmpty()) return ""
         val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
         if (clean.isEmpty()) return ""
@@ -975,12 +987,15 @@ class ChatboxViewModel(
         var total = 0
 
         for (line in clean) {
+            if (out.size >= maxLines) break
+
             val add = if (out.isEmpty()) line.length else (1 + line.length)
-            if (total + add > limit) {
-                val remain = limit - total - (if (out.isEmpty()) 0 else 1)
-                if (remain >= 2) out.add(line.take(remain - 1) + "…")
+            if (total + add > maxChars) {
+                val remain = maxChars - total - (if (out.isEmpty()) 0 else 1)
+                if (remain >= 2 && out.size < maxLines) out.add(line.take(remain - 1) + "…")
                 break
             }
+
             out.add(line)
             total += add
         }
