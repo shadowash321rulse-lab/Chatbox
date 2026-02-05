@@ -7,10 +7,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.annotation.MainThread
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
@@ -49,10 +46,6 @@ class ChatboxViewModel(
         // ✅ Locked delays (per your request)
         private const val CYCLE_INTERVAL_SECONDS_LOCKED = 10
         private const val MUSIC_REFRESH_SECONDS_LOCKED = 2
-
-        // ✅ Combined limits (per your request)
-        private const val COMBINED_MAX_CHARS = 144
-        private const val COMBINED_MAX_LINES = 9
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -290,7 +283,10 @@ class ChatboxViewModel(
     var lastNowPlayingArtist by mutableStateOf("(blank)")
     var lastSentToVrchatAtMs by mutableStateOf(0L)
 
-    // ✅ We will override this based on progress movement
+    // PlaybackState hint from listener (NOT trusted)
+    private var nowPlayingIsPlayingHint by mutableStateOf(false)
+
+    // ✅ Motion-truth playing flag (trusted)
     var nowPlayingIsPlaying by mutableStateOf(false)
         private set
 
@@ -299,12 +295,10 @@ class ChatboxViewModel(
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
 
-    // ✅ Progress-movement inference fields
-    private var lastPosSampleMs: Long = -1L
-    private var lastPosSampleAtElapsed: Long = 0L
-    private var noMoveStreak: Int = 0
-    private var trackChangeGraceUntilElapsed: Long = 0L
-    private var lastTrackKey: String = ""
+    // Motion tracker
+    private var lastMotionCheckElapsedMs: Long = 0L
+    private var lastMotionPosMs: Long = 0L
+    private var lastMotionPlaying: Boolean = false
 
     var debugLastAfkOsc by mutableStateOf("")
         private set
@@ -344,6 +338,7 @@ class ChatboxViewModel(
         }
 
         // ✅ IMPORTANT FIX (cursor jump):
+        // Do NOT trim/normalize user text when loading cycle lines.
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
                 setCycleLinesFromTextPreserve(text)
@@ -386,7 +381,6 @@ class ChatboxViewModel(
             userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
         }
 
-        // ✅ Core: infer playing from progress movement + track-change grace
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
@@ -399,57 +393,58 @@ class ChatboxViewModel(
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
+                nowPlayingIsPlayingHint = s.isPlaying
 
-                val nowElapsed = SystemClock.elapsedRealtime()
-
-                // Track key for skip/next/back detection
-                val trackKey = buildString {
-                    append(activePackage); append('|')
-                    append(s.title); append('|')
-                    append(s.artist); append('|')
-                    append(s.durationMs)
-                }
-                if (trackKey != lastTrackKey) {
-                    lastTrackKey = trackKey
-                    // Give a short "playing" grace so Paused doesn't stick during metadata churn
-                    trackChangeGraceUntilElapsed = nowElapsed + 1200L
-                    // Reset movement tracking so we don't treat new song as "stuck paused"
-                    lastPosSampleMs = -1L
-                    lastPosSampleAtElapsed = nowElapsed
-                    noMoveStreak = 0
-                }
-
-                // Movement inference:
-                val dt = (nowElapsed - lastPosSampleAtElapsed).coerceAtLeast(0L)
-                val movedEnough = if (lastPosSampleMs >= 0L) {
-                    val dp = abs(s.positionMs - lastPosSampleMs)
-                    // require a meaningful change OR time delta big enough to trust samples
-                    (dp >= 250L && dt >= 350L)
-                } else {
-                    false
-                }
-
-                if (movedEnough) {
-                    noMoveStreak = 0
-                } else {
-                    // only count as "not moving" if we've waited long enough for an update
-                    if (dt >= 500L) noMoveStreak++
-                }
-
-                val inferredPlaying = (nowElapsed < trackChangeGraceUntilElapsed) || (noMoveStreak <= 1 && movedEnough)
-
-                // If we haven't seen movement for multiple samples, force paused
-                nowPlayingIsPlaying = if (noMoveStreak >= 3) false else inferredPlaying
-
-                // Update samples
-                if (dt >= 250L) {
-                    lastPosSampleMs = s.positionMs
-                    lastPosSampleAtElapsed = nowElapsed
-                }
+                // ✅ Motion-based truth (fixes "Paused" sticking / inconsistent state)
+                updateNowPlayingIsPlayingFromMotion()
 
                 rebuildCombinedPreviewOnly()
             }
         }
+    }
+
+    // =========================
+    // Motion-based pause/unpause detection
+    // =========================
+    private fun updateNowPlayingIsPlayingFromMotion() {
+        val now = SystemClock.elapsedRealtime()
+
+        // Predict position "now" based on last snapshot time (snapshot time is elapsedRealtime-based)
+        val dur = max(1L, nowPlayingDurationMs)
+        val posSnapshot = nowPlayingPositionMs
+        val lastUpdate = if (nowPlayingPositionUpdateTimeMs > 0L) nowPlayingPositionUpdateTimeMs else now
+
+        val elapsed = max(0L, now - lastUpdate)
+        val adj = (elapsed * nowPlayingSpeed).toLong()
+        val predicted = (posSnapshot + max(0L, adj)).coerceIn(0L, dur)
+
+        val dt = now - lastMotionCheckElapsedMs
+        val dp = abs(predicted - lastMotionPosMs)
+
+        // If we don't have history yet, fall back to hint
+        if (lastMotionCheckElapsedMs == 0L) {
+            lastMotionCheckElapsedMs = now
+            lastMotionPosMs = predicted
+            lastMotionPlaying = nowPlayingIsPlayingHint
+            nowPlayingIsPlaying = nowPlayingIsPlayingHint
+            return
+        }
+
+        // ✅ Rule:
+        // - If position moves noticeably within a short window => playing
+        // - Otherwise => paused
+        // Also: movement overrides a bad hint (fixes stuck "Paused").
+        val moving = (dt >= 700L && dp >= 250L) || (dt >= 1200L && dp >= 200L)
+
+        val inferred = if (moving) true else false
+
+        // Smooth out flicker: if dt is tiny, keep last state
+        val finalState = if (dt < 450L) lastMotionPlaying else inferred
+
+        nowPlayingIsPlaying = finalState
+        lastMotionPlaying = finalState
+        lastMotionCheckElapsedMs = now
+        lastMotionPosMs = predicted
     }
 
     // =========================
@@ -526,7 +521,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Cycle lines management
+    // Cycle lines management (preserve)
     // =========================
     private fun setCycleLinesFromTextPreserve(text: String) {
         val raw = text.split("\n")
@@ -720,6 +715,8 @@ class ChatboxViewModel(
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
+                // ✅ keep re-evaluating motion in the loop too (fixes "Paused" sticking until next notif)
+                updateNowPlayingIsPlayingFromMotion()
                 rebuildAndMaybeSendCombined(forceSend = true, local = local)
                 delay(MUSIC_REFRESH_SECONDS_LOCKED.toLong() * 1000L)
             }
@@ -733,6 +730,7 @@ class ChatboxViewModel(
     }
 
     fun sendNowPlayingOnce(local: Boolean = false) {
+        updateNowPlayingIsPlayingFromMotion()
         rebuildAndMaybeSendCombined(forceSend = true, local = local)
     }
 
@@ -792,7 +790,8 @@ class ChatboxViewModel(
         if (cycleLine.isNotBlank()) lines += cycleLine
         lines.addAll(musicLines)
 
-        val combined = joinWithLimitAndLines(lines, COMBINED_MAX_CHARS, COMBINED_MAX_LINES)
+        // ✅ Limit: 9 lines + 144 chars total
+        val combined = joinWithLimit(lines, charLimit = 144, maxLines = 9)
         debugLastCombinedOsc = combined
         return combined
     }
@@ -819,24 +818,25 @@ class ChatboxViewModel(
         val safeTitle = title.takeIf { it != "(blank)" } ?: ""
         val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
 
-        // line width heuristic (VRChat-ish)
-        val maxLine = 42
-        val maxTwoLines = maxLine * 2
+        // ✅ If "artist — title" would exceed ~2 lines, drop artist
+        val maxLineChars = 42
+        val maxTwoLines = maxLineChars * 2
 
-        // ✅ If "artist — title" is likely to exceed 2 lines, drop artist (keep title)
-        val combined = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
-        val useArtist = safeArtist.isNotBlank() && combined.length <= maxTwoLines
-        val line1Source = if (useArtist) combined else safeTitle
+        val candidate = if (safeArtist.isNotBlank()) "$safeArtist — $safeTitle" else safeTitle
+        val line1Base = if (estimateWrapLines(candidate, maxLineChars) > 2) safeTitle else candidate
 
         val line1 = when {
-            line1Source.length <= maxLine -> line1Source
-            else -> line1Source.take(maxLine - 1) + "…"
+            line1Base.length <= maxTwoLines -> line1Base
+            else -> line1Base.take(maxTwoLines - 1) + "…"
         }.trim()
 
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
 
-        val pos = if (nowPlayingIsPlaying && dur > 0L) {
+        // Use motion-truth playing state (NOT the flaky hint)
+        val playing = nowPlayingIsPlaying
+
+        val pos = if (playing && dur > 0L) {
             val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
             val adj = (elapsed * nowPlayingSpeed).toLong()
             (posSnapshot + max(0L, adj)).coerceAtMost(dur)
@@ -848,16 +848,22 @@ class ChatboxViewModel(
             preset = spotifyPreset,
             posMs = pos,
             durMs = max(1L, dur),
-            isPlaying = nowPlayingIsPlaying
+            isPlaying = playing
         )
 
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        val status = if (!nowPlayingIsPlaying) "Paused" else ""
+        val status = if (!playing) "Paused" else ""
 
         val line2 = listOf(bar, time).joinToString(" ").trim()
         val line3 = status.takeIf { it.isNotBlank() }
 
         return listOfNotNull(line1.takeIf { it.isNotBlank() }, line2.takeIf { it.isNotBlank() }, line3)
+    }
+
+    private fun estimateWrapLines(text: String, maxCharsPerLine: Int): Int {
+        if (text.isBlank()) return 0
+        // crude but stable: count how many "lines" it would be if wrapped at maxCharsPerLine
+        return ((text.length - 1) / maxCharsPerLine) + 1
     }
 
     // =========================
@@ -884,7 +890,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // ✅ Crystal (keep ⟡)
+            3 -> { // ✅ Crystal restored: ⟡
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -892,7 +898,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            4 -> renderSoundwaveBar(p, posMs, isPlaying) // ✅ square marker only here
+            4 -> renderSoundwaveBar(p, posMs, isPlaying) // soundwave special
 
             else -> { // Geometry (10 chars)
                 val slots = 10
@@ -926,9 +932,11 @@ class ChatboxViewModel(
 
     /**
      * ✅ EXACT LENGTH = 10 chars total:
-     * - 8 wave slots
-     * - brackets around progress slot
-     * ✅ Progress marker is a square: ■ (only for soundwave)
+     * - 8 wave chars
+     * - plus "[" and "]" around the progress index → +2
+     *
+     * ✅ Change: progress indicator becomes a "techy square" INSIDE the brackets.
+     * Brackets stay.
      */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
@@ -950,7 +958,7 @@ class ChatboxViewModel(
         for (i in 0 until slots) {
             if (i == idx) {
                 out.append('[')
-                out.append('■') // ✅ square marker
+                out.append('▣') // ✅ techy square marker
                 out.append(']')
             } else {
                 out.append(chars[i])
@@ -977,25 +985,21 @@ class ChatboxViewModel(
         return "${m}:${s.toString().padStart(2, '0')}"
     }
 
-    // ✅ 144 chars + 9 lines enforced here (combined always goes through this)
-    private fun joinWithLimitAndLines(lines: List<String>, maxChars: Int, maxLines: Int): String {
+    private fun joinWithLimit(lines: List<String>, charLimit: Int, maxLines: Int): String {
         if (lines.isEmpty()) return ""
-        val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }
+        val clean = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(maxLines)
         if (clean.isEmpty()) return ""
 
         val out = ArrayList<String>()
         var total = 0
 
         for (line in clean) {
-            if (out.size >= maxLines) break
-
             val add = if (out.isEmpty()) line.length else (1 + line.length)
-            if (total + add > maxChars) {
-                val remain = maxChars - total - (if (out.isEmpty()) 0 else 1)
-                if (remain >= 2 && out.size < maxLines) out.add(line.take(remain - 1) + "…")
+            if (total + add > charLimit) {
+                val remain = charLimit - total - (if (out.isEmpty()) 0 else 1)
+                if (remain >= 2) out.add(line.take(remain - 1) + "…")
                 break
             }
-
             out.add(line)
             total += add
         }
