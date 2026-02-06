@@ -68,6 +68,9 @@ class ChatboxViewModel(
         // ✅ PAUSE TRIGGER: no movement for 5 seconds
         private const val NO_MOVE_PAUSE_MS = 5_000L
 
+        // ✅ UI ticker (does NOT send OSC) – used to detect pause even when notifications stop updating
+        private const val UI_TICK_MS = 500L
+
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
 
@@ -275,6 +278,7 @@ class ChatboxViewModel(
         private set
 
     private var nowPlayingJob: Job? = null
+    private var nowPlayingUiTickerJob: Job? = null
 
     // ---- Playing inference (plus pause restore) ----
     private var inferredIsPlaying = false
@@ -454,6 +458,32 @@ class ChatboxViewModel(
         }
     }
 
+    // =========================
+    // UI ticker: detects pause even when notifications stop sending updates
+    // =========================
+    private fun startNowPlayingUiTicker() {
+        nowPlayingUiTickerJob?.cancel()
+        nowPlayingUiTickerJob = viewModelScope.launch {
+            while (spotifyEnabled) {
+                // Recompute pause/playing even if no new notification arrives
+                val newPlaying = computeDisplayedPlaying()
+                if (newPlaying != nowPlayingIsPlaying) {
+                    nowPlayingIsPlaying = newPlaying
+                }
+
+                // Keep preview smooth (progress bar uses elapsedRealtime when playing)
+                rebuildCombinedPreviewOnly()
+
+                delay(UI_TICK_MS)
+            }
+        }
+    }
+
+    private fun stopNowPlayingUiTicker() {
+        nowPlayingUiTickerJob?.cancel()
+        nowPlayingUiTickerJob = null
+    }
+
     private fun computeDisplayedPlaying(): Boolean {
         val now = System.currentTimeMillis()
         val noMoveForMs = now - lastMovementAtMs
@@ -465,7 +495,7 @@ class ChatboxViewModel(
 
         if (hardPause) return false
 
-        // ✅ CHANGED: pause if no movement for 5 seconds
+        // ✅ pause if no movement for 5 seconds (works even if notifications stop)
         if (noMoveForMs >= NO_MOVE_PAUSE_MS) return false
 
         return inferredIsPlaying || nowPlayingReportedIsPlaying
@@ -520,7 +550,13 @@ class ChatboxViewModel(
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
         rebuildCombinedPreviewOnly()
-        if (!enabled) stopNowPlayingSender(clearFromChatbox = true)
+
+        if (enabled) {
+            startNowPlayingUiTicker()
+        } else {
+            stopNowPlayingUiTicker()
+            stopNowPlayingSender(clearFromChatbox = true)
+        }
     }
 
     fun setSpotifyDemoFlag(enabled: Boolean) {
@@ -736,6 +772,10 @@ class ChatboxViewModel(
     // =========================
     fun startNowPlayingSender(local: Boolean = false) {
         if (!spotifyEnabled) return
+
+        // Ensure UI pause detection keeps working while enabled
+        startNowPlayingUiTicker()
+
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
@@ -763,6 +803,7 @@ class ChatboxViewModel(
     fun stopAll(clearFromChatbox: Boolean) {
         stopCycle(clearFromChatbox = false)
         stopNowPlayingSender(clearFromChatbox = false)
+        stopNowPlayingUiTicker()
         stopAfkSender(clearFromChatbox = false)
         if (clearFromChatbox) clearChatbox()
     }
@@ -1060,7 +1101,8 @@ class ChatboxViewModel(
         lastInferredSampleTimeMs = nowMs
         lastInferredPosMs = positionMs
 
-        val movedEnough = dp > 500L
+        // ✅ slightly more sensitive (some apps only update position in smaller steps)
+        val movedEnough = dp > 200L
         if (movedEnough) {
             inferredIsPlaying = true
             lastMovementAtMs = nowMs
@@ -1076,8 +1118,6 @@ class ChatboxViewModel(
         }
 
         val noMoveForMs = nowMs - lastMovementAtMs
-
-        // ✅ CHANGED: pause inference only after 5s no movement
         if (noMoveForMs >= NO_MOVE_PAUSE_MS) {
             inferredIsPlaying = false
             return
