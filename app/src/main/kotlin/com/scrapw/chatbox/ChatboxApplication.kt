@@ -7,7 +7,6 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.scrapw.chatbox.data.UserPreferencesRepository
 
-
 private const val USER_PREFERENCE_NAME = "user_preferences"
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = USER_PREFERENCE_NAME
@@ -16,8 +15,15 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
 class ChatboxApplication : Application() {
     lateinit var userPreferencesRepository: UserPreferencesRepository
 
+    companion object {
+        @Volatile
+        lateinit var instance: ChatboxApplication
+            private set
+    }
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         userPreferencesRepository = UserPreferencesRepository(dataStore)
     }
 }
