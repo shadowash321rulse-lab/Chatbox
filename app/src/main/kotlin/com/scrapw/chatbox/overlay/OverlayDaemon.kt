@@ -3,6 +3,7 @@ package com.scrapw.chatbox.overlay
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -20,10 +21,7 @@ import com.scrapw.chatbox.data.SettingsStates
 
 @Composable
 fun OverlayDaemon(context: Context) {
-    // Not a daemon at all...
-
     val state = SettingsStates.overlayState()
-
     val firstTime = remember { mutableStateOf(true) }
 
     if (firstTime.value && !Settings.canDrawOverlays(context)) {
@@ -45,15 +43,13 @@ fun OverlayDaemon(context: Context) {
 @Composable
 private fun StartOverlay(context: Context) {
     Log.d("Service", "startOverlay")
-
     val state = SettingsStates.overlayState()
 
     val startForResult =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
-//            if (result.resultCode == Activity.RESULT_OK) {
             if (Settings.canDrawOverlays(context)) {
                 Log.d("Overlay Permission", "Permission granted")
-                context.startService(Intent(context, OverlayService::class.java))
+                startOverlayService(context)
             } else {
                 Log.d("Overlay Permission", "Permission denied")
                 state.value = false
@@ -61,17 +57,25 @@ private fun StartOverlay(context: Context) {
         }
 
     if (Settings.canDrawOverlays(context)) {
-        context.startService(Intent(context, OverlayService::class.java))
+        startOverlayService(context)
     } else {
         Log.d("Service", "Can't draw Overlays!")
         CheckOverlayPermission(context, startForResult)
     }
 }
 
+private fun startOverlayService(context: Context) {
+    val intent = Intent(context, OverlayService::class.java)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        context.startForegroundService(intent)
+    } else {
+        context.startService(intent)
+    }
+}
+
 @Composable
 private fun StopOverlay(context: Context) {
     Log.d("Service", "stopOverlay")
-
     context.stopService(Intent(context, OverlayService::class.java))
 }
 
@@ -80,16 +84,10 @@ private fun CheckOverlayPermission(
     context: Context,
     result: ManagedActivityResultLauncher<Intent, ActivityResult>
 ) {
-
-    val CODE_DRAW_OVER_OTHER_APP_PERMISSION = 2084
-
-
     if (!Settings.canDrawOverlays(context)) {
-        //If the draw over permission is not available open the settings screen
-        //to grant the permission.
         val intent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$context.packageName")
+            Uri.parse("package:${context.packageName}")
         )
 
         val toast = Toast.makeText(
@@ -102,6 +100,5 @@ private fun CheckOverlayPermission(
             toast.show()
             result.launch(intent)
         }
-
     }
 }
