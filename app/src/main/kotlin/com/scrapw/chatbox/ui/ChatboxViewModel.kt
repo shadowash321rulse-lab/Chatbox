@@ -58,13 +58,15 @@ class ChatboxViewModel(
         private const val SEND_FLOOR_MS = 2_000L
 
         // ✅ Now Playing: metadata stabilization to prevent "wrong song" on rapid skips
-        private const val META_STABLE_MS = 1_100L          // how long metadata must stay consistent
-        private const val META_CONFIRM_MOVE_MS = 900L       // how much position must advance to confirm
-        private const val META_GIVE_UP_MS = 2_400L           // after this, accept stable metadata even if movement is weak
+        private const val META_STABLE_MS = 1_100L
+        private const val META_CONFIRM_MOVE_MS = 900L
+        private const val META_GIVE_UP_MS = 2_400L
 
-        // ✅ Paused display ONLY (does NOT affect syncing)
-        private const val PAUSE_HOLD_MS = 900L              // system must report paused for this long
-        private const val PAUSE_NEEDS_NO_MOVE_MS = 1_200L    // and no movement recently (avoids skip/back fake pauses)
+        // ✅ If position resets near the start, we treat it as a definite track switch
+        private const val POS_RESET_CONFIRM_MS = 1_800L
+
+        // ✅ PAUSE TRIGGER: no movement for 5 seconds
+        private const val NO_MOVE_PAUSE_MS = 5_000L
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -274,18 +276,15 @@ class ChatboxViewModel(
 
     private var nowPlayingJob: Job? = null
 
-    // Now Playing "inference" to avoid stuck Paused on skip/back:
+    // ---- Playing inference (plus pause restore) ----
     private var inferredIsPlaying = false
     private var lastTrackKeyForInference: String = ""
     private var lastInferredPosMs: Long = 0L
     private var lastInferredSampleTimeMs: Long = 0L
     private var lastMovementAtMs: Long = 0L
-
-    // ✅ "Paused" display ONLY (does not affect syncing)
     private var pauseCandidateSinceMs: Long = 0L
-    private var nowPlayingShowPaused by mutableStateOf(false)
 
-    // ✅ Now Playing metadata stabilizer (prevents wrong song on rapid skips)
+    // ---- Metadata stabilizer (song name follows progress) ----
     private var confirmedTrackKey: String = ""
     private var confirmedTitle: String = ""
     private var confirmedArtist: String = ""
@@ -420,15 +419,15 @@ class ChatboxViewModel(
                 activePackage = if (s.activePackage.isBlank()) "(none)" else s.activePackage
                 nowPlayingDetected = s.detected
 
-                // Raw timing/progress always up to date
+                // Always keep timing/progress updated (this is your bar + time)
                 nowPlayingDurationMs = s.durationMs
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingReportedIsPlaying = s.isPlaying
 
-                // Inference (this is what keeps everything working)
-                val trackChanged = updateInferredPlaying(
+                // 1) Update playing inference (but allow "Paused" again)
+                updateInferredPlaying(
                     title = s.title,
                     artist = s.artist,
                     durationMs = s.durationMs,
@@ -437,10 +436,7 @@ class ChatboxViewModel(
                     playbackSpeed = s.playbackSpeed
                 )
 
-                // ✅ DO NOT CHANGE THIS: keep behavior that worked perfectly
-                nowPlayingIsPlaying = inferredIsPlaying
-
-                // Stabilize metadata (prevents wrong song on rapid skips)
+                // 2) Stabilize metadata, BUT confirm immediately on position reset / duration jump
                 stabilizeNowPlayingMetadata(
                     rawTitle = s.title,
                     rawArtist = s.artist,
@@ -450,12 +446,29 @@ class ChatboxViewModel(
                     inferredIsPlaying = inferredIsPlaying
                 )
 
-                // ✅ Paused display ONLY (never affects syncing)
-                updatePausedDisplay(trackChanged)
+                // Final displayed playing state:
+                nowPlayingIsPlaying = computeDisplayedPlaying()
 
                 rebuildCombinedPreviewOnly()
             }
         }
+    }
+
+    private fun computeDisplayedPlaying(): Boolean {
+        val now = System.currentTimeMillis()
+        val noMoveForMs = now - lastMovementAtMs
+
+        val hardPause =
+            !nowPlayingReportedIsPlaying &&
+                    pauseCandidateSinceMs > 0L &&
+                    (now - pauseCandidateSinceMs) >= 1200L
+
+        if (hardPause) return false
+
+        // ✅ CHANGED: pause if no movement for 5 seconds
+        if (noMoveForMs >= NO_MOVE_PAUSE_MS) return false
+
+        return inferredIsPlaying || nowPlayingReportedIsPlaying
     }
 
     // =========================
@@ -861,9 +874,7 @@ class ChatboxViewModel(
         )
 
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-
-        // ✅ "Paused" display is now independent from syncing
-        val status = if (nowPlayingShowPaused) "Paused" else ""
+        val status = if (!nowPlayingIsPlaying) "Paused" else ""
 
         val line2 = listOf(bar, time).joinToString(" ").trim()
         val line3 = status.takeIf { it.isNotBlank() }
@@ -879,7 +890,7 @@ class ChatboxViewModel(
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> {
+            1 -> { // Love (10 chars total)
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -887,7 +898,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> {
+            2 -> { // Minimal (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -895,7 +906,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> {
+            3 -> { // Crystal (10 chars) ✅ keep ⟡
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -905,7 +916,7 @@ class ChatboxViewModel(
 
             4 -> renderSoundwaveBar(p, posMs, isPlaying)
 
-            else -> {
+            else -> { // Geometry (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -1020,8 +1031,7 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Fix 1: infer playing from movement (prevents stuck Paused on skips)
-    // Returns: trackChanged
+    // Fix 1: infer playing from movement (BUT allow pause to show again)
     // =========================
     private fun updateInferredPlaying(
         title: String,
@@ -1030,7 +1040,7 @@ class ChatboxViewModel(
         positionMs: Long,
         reportedIsPlaying: Boolean,
         playbackSpeed: Float
-    ): Boolean {
+    ) {
         val nowMs = System.currentTimeMillis()
 
         val key = "${title.trim()}|${artist.trim()}|$durationMs"
@@ -1041,17 +1051,12 @@ class ChatboxViewModel(
             lastInferredPosMs = positionMs
             lastInferredSampleTimeMs = nowMs
             lastMovementAtMs = nowMs
-            inferredIsPlaying = true
-
-            // ✅ Reset pause display state on track change (prevents “Paused” sticking)
             pauseCandidateSinceMs = 0L
-            nowPlayingShowPaused = false
-
-            return true
+            inferredIsPlaying = true
+            return
         }
 
         val dp = positionMs - lastInferredPosMs
-
         lastInferredSampleTimeMs = nowMs
         lastInferredPosMs = positionMs
 
@@ -1059,51 +1064,31 @@ class ChatboxViewModel(
         if (movedEnough) {
             inferredIsPlaying = true
             lastMovementAtMs = nowMs
-            return false
+            pauseCandidateSinceMs = 0L
+            return
+        }
+
+        // If system reports paused, start a pause candidate timer.
+        if (!reportedIsPlaying || abs(playbackSpeed) < 0.01f) {
+            if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = nowMs
+        } else {
+            pauseCandidateSinceMs = 0L
         }
 
         val noMoveForMs = nowMs - lastMovementAtMs
-        if (noMoveForMs >= 4_500L) {
+
+        // ✅ CHANGED: pause inference only after 5s no movement
+        if (noMoveForMs >= NO_MOVE_PAUSE_MS) {
             inferredIsPlaying = false
-            return false
+            return
         }
 
+        // Soft hint: keep playing if system says playing
         if (reportedIsPlaying) inferredIsPlaying = true
-        if (abs(playbackSpeed) < 0.01f && noMoveForMs >= 4_500L) inferredIsPlaying = false
-        return false
     }
 
     // =========================
-    // ✅ Paused display ONLY (never affects syncing)
-    // =========================
-    private fun updatePausedDisplay(trackChanged: Boolean) {
-        if (trackChanged) return
-
-        val now = System.currentTimeMillis()
-
-        // If system says playing -> clear immediately
-        if (nowPlayingReportedIsPlaying) {
-            pauseCandidateSinceMs = 0L
-            nowPlayingShowPaused = false
-            return
-        }
-
-        // If we've seen movement recently, don't show paused (skip/back glitch protection)
-        if (now - lastMovementAtMs < PAUSE_NEEDS_NO_MOVE_MS) {
-            pauseCandidateSinceMs = 0L
-            nowPlayingShowPaused = false
-            return
-        }
-
-        // Start/continue the pause hold timer
-        if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = now
-
-        // Only show paused after it persists
-        nowPlayingShowPaused = (now - pauseCandidateSinceMs >= PAUSE_HOLD_MS)
-    }
-
-    // =========================
-    // Fix 2: metadata stabilization (prevents wrong song on rapid skips)
+    // Fix 2: metadata stabilization (song name follows progress)
     // =========================
     private fun stabilizeNowPlayingMetadata(
         rawTitle: String,
@@ -1139,6 +1124,7 @@ class ChatboxViewModel(
 
         val rawKey = "${t}|${a}|$rawDurationMs"
 
+        // First ever
         if (confirmedTrackKey.isBlank()) {
             confirmedTrackKey = rawKey
             confirmedTitle = t
@@ -1146,18 +1132,38 @@ class ChatboxViewModel(
             confirmedDurationMs = rawDurationMs
             lastNowPlayingTitle = if (t.isBlank()) "(blank)" else t
             lastNowPlayingArtist = if (a.isBlank()) "(blank)" else a
-
             pendingTrackKey = ""
             pendingSinceMs = 0L
             return
         }
 
+        // If rawKey equals confirmed, just show confirmed
         if (rawKey == confirmedTrackKey && pendingTrackKey.isBlank()) {
             lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
             lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
             return
         }
 
+        // ✅ FAST CONFIRM: If position has reset near start OR duration changed, we confirm immediately.
+        val posLooksLikeNewTrack = positionMs in 0..POS_RESET_CONFIRM_MS
+        val durationChanged = (rawDurationMs > 0L && confirmedDurationMs > 0L && rawDurationMs != confirmedDurationMs)
+
+        if (rawKey != confirmedTrackKey && (posLooksLikeNewTrack || durationChanged)) {
+            confirmedTrackKey = rawKey
+            confirmedTitle = t
+            confirmedArtist = a
+            confirmedDurationMs = rawDurationMs
+
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Start/replace pending candidate
         if (pendingTrackKey.isBlank() || rawKey != pendingTrackKey) {
             pendingTrackKey = rawKey
             pendingTitle = t
@@ -1166,11 +1172,13 @@ class ChatboxViewModel(
             pendingSinceMs = now
             pendingStartPosMs = positionMs.coerceAtLeast(0L)
 
+            // keep showing confirmed until confirmed
             lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
             lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
             return
         }
 
+        // Pending still same: confirm conditions
         val stableFor = now - pendingSinceMs
         val movedSincePending = (positionMs - pendingStartPosMs)
 
@@ -1194,6 +1202,7 @@ class ChatboxViewModel(
             return
         }
 
+        // Still pending: show confirmed
         lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
         lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
     }
