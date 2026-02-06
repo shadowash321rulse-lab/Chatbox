@@ -60,7 +60,11 @@ class ChatboxViewModel(
         // ✅ Now Playing: metadata stabilization to prevent "wrong song" on rapid skips
         private const val META_STABLE_MS = 1_100L          // how long metadata must stay consistent
         private const val META_CONFIRM_MOVE_MS = 900L       // how much position must advance to confirm
-        private const val META_GIVE_UP_MS = 2_400L           // after this, accept stable metadata even if movement is weak
+        private const val META_GIVE_UP_MS = 2_400L          // after this, accept stable metadata even if movement is weak
+
+        // ✅ Now Playing: synthetic ticking when notifications stop updating after rapid skips
+        // If the system stops updating position snapshots, we still move the bar locally while "playing".
+        private const val SYNTH_TICK_RESET_SEEK_MS = 2_500L  // if raw position jumps back a lot, reset synth base
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -290,6 +294,13 @@ class ChatboxViewModel(
     private var pendingSinceMs: Long = 0L
     private var pendingStartPosMs: Long = 0L
 
+    // ✅ Synthetic progress ticking (fixes "skipping fast = progress stops updating")
+    private var synthBaseTrackKey: String = ""
+    private var synthBasePosMs: Long = 0L
+    private var synthBaseElapsedMs: Long = 0L
+    private var lastRawPosMs: Long = 0L
+    private var lastRawUpdateElapsedMs: Long = 0L
+
     // =========================
     // UI clutter controls (persisted)
     // =========================
@@ -323,7 +334,7 @@ class ChatboxViewModel(
 
     private var nowPlayingDurationMs: Long = 0L
     private var nowPlayingPositionMs: Long = 0L
-    private var nowPlayingPositionUpdateTimeMs: Long = 0L
+    private var nowPlayingPositionUpdateTimeMs: Long = 0L // elapsedRealtime-based snapshot time
     private var nowPlayingSpeed: Float = 1f
     private var nowPlayingReportedIsPlaying: Boolean = false
 
@@ -420,6 +431,17 @@ class ChatboxViewModel(
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingReportedIsPlaying = s.isPlaying
+
+                // Track raw movement snapshots for synth reset decisions
+                val nowElapsed = SystemClock.elapsedRealtime()
+                if (s.positionUpdateTimeMs > 0L) {
+                    lastRawPosMs = s.positionMs
+                    lastRawUpdateElapsedMs = s.positionUpdateTimeMs
+                } else {
+                    // if missing update time, at least remember raw position
+                    lastRawPosMs = s.positionMs
+                    lastRawUpdateElapsedMs = nowElapsed
+                }
 
                 // Update playing inference first (uses raw metadata key)
                 updateInferredPlaying(
@@ -834,14 +856,16 @@ class ChatboxViewModel(
 
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
+        val updateElapsed = if (spotifyDemoEnabled && !nowPlayingDetected) SystemClock.elapsedRealtime() else nowPlayingPositionUpdateTimeMs
 
-        val pos = if (nowPlayingIsPlaying && dur > 0L) {
-            val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
-            val adj = (elapsed * nowPlayingSpeed).toLong()
-            (posSnapshot + max(0L, adj)).coerceAtMost(dur)
-        } else {
-            posSnapshot
-        }
+        val pos = computeDisplayedPositionMs(
+            trackKey = confirmedTrackKey.ifBlank { "${safeTitle}|${safeArtist}|$dur" },
+            durMs = max(1L, dur),
+            rawPosMs = posSnapshot,
+            rawUpdateElapsedMs = updateElapsed,
+            speed = nowPlayingSpeed,
+            isPlaying = nowPlayingIsPlaying
+        )
 
         val bar = renderProgressBar(
             preset = spotifyPreset,
@@ -857,6 +881,65 @@ class ChatboxViewModel(
         val line3 = status.takeIf { it.isNotBlank() }
 
         return listOfNotNull(line1.takeIf { it.isNotBlank() }, line2.takeIf { it.isNotBlank() }, line3)
+    }
+
+    /**
+     * ✅ Fix for: "skip fast => correct song shown but progress stops updating"
+     *
+     * We prefer using PlaybackState's elapsedRealtime-based timestamp when available.
+     * If notifications stop updating that timestamp/position during rapid skips, we synth-tick locally
+     * while playing, so the bar/time still move and we don't get falsely treated as "paused".
+     */
+    private fun computeDisplayedPositionMs(
+        trackKey: String,
+        durMs: Long,
+        rawPosMs: Long,
+        rawUpdateElapsedMs: Long,
+        speed: Float,
+        isPlaying: Boolean
+    ): Long {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val safeRawPos = max(0L, rawPosMs)
+
+        // Reset synth base when track changes
+        if (trackKey != synthBaseTrackKey) {
+            synthBaseTrackKey = trackKey
+            synthBasePosMs = safeRawPos
+            synthBaseElapsedMs = nowElapsed
+        }
+
+        // If raw pos jumps backwards a lot (seek/new track weirdness), reset synth base
+        if (safeRawPos + SYNTH_TICK_RESET_SEEK_MS < synthBasePosMs) {
+            synthBasePosMs = safeRawPos
+            synthBaseElapsedMs = nowElapsed
+        }
+
+        // If we have a meaningful rawUpdateElapsedMs, compute "official" tick from that snapshot
+        val hasSnapshotTime = rawUpdateElapsedMs > 0L
+        val official = if (hasSnapshotTime && isPlaying) {
+            val elapsed = max(0L, nowElapsed - rawUpdateElapsedMs)
+            val adj = (elapsed * speed).toLong()
+            (safeRawPos + max(0L, adj)).coerceIn(0L, durMs)
+        } else {
+            safeRawPos.coerceIn(0L, durMs)
+        }
+
+        // Keep synth base in sync when official progresses forward
+        if (official > synthBasePosMs) {
+            synthBasePosMs = official
+            synthBaseElapsedMs = nowElapsed
+        }
+
+        // If not playing, don't synth tick
+        if (!isPlaying) return official
+
+        // Synth tick from our base
+        val synthElapsed = max(0L, nowElapsed - synthBaseElapsedMs)
+        val synthAdj = (synthElapsed * speed).toLong()
+        val synth = (synthBasePosMs + max(0L, synthAdj)).coerceIn(0L, durMs)
+
+        // Choose whichever is higher (prevents "stuck" when official freezes)
+        return max(official, synth)
     }
 
     // =========================
@@ -1038,13 +1121,11 @@ class ChatboxViewModel(
             return
         }
 
-        val dt = max(1L, nowMs - lastInferredSampleTimeMs)
         val dp = positionMs - lastInferredPosMs
 
         lastInferredSampleTimeMs = nowMs
         lastInferredPosMs = positionMs
 
-        // consider movement if position advanced enough for the sampling interval
         val movedEnough = dp > 500L
 
         if (movedEnough) {
@@ -1080,7 +1161,6 @@ class ChatboxViewModel(
         val a = rawArtist.trim()
         val hasMeta = t.isNotBlank() || a.isNotBlank()
 
-        // If nothing detected, clear confirmed (but keep UI placeholders)
         if (!hasMeta) {
             confirmedTrackKey = ""
             confirmedTitle = ""
@@ -1112,10 +1192,15 @@ class ChatboxViewModel(
 
             pendingTrackKey = ""
             pendingSinceMs = 0L
+
+            // reset synth base on first confirm
+            synthBaseTrackKey = confirmedTrackKey
+            synthBasePosMs = max(0L, positionMs)
+            synthBaseElapsedMs = SystemClock.elapsedRealtime()
             return
         }
 
-        // No change: just keep confirmed fields (UI uses them)
+        // No change + no pending
         if (rawKey == confirmedTrackKey && pendingTrackKey.isBlank()) {
             lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
             lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
@@ -1124,7 +1209,6 @@ class ChatboxViewModel(
 
         // New metadata seen (or pending already exists)
         if (pendingTrackKey.isBlank() || rawKey != pendingTrackKey) {
-            // Start/replace pending candidate immediately on any new rawKey
             pendingTrackKey = rawKey
             pendingTitle = t
             pendingArtist = a
@@ -1132,7 +1216,7 @@ class ChatboxViewModel(
             pendingSinceMs = now
             pendingStartPosMs = positionMs.coerceAtLeast(0L)
 
-            // Keep showing confirmed (this is the whole point)
+            // keep showing confirmed
             lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
             lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
             return
@@ -1159,6 +1243,11 @@ class ChatboxViewModel(
 
             lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
             lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+
+            // ✅ IMPORTANT: reset synth base when the confirmed track changes
+            synthBaseTrackKey = confirmedTrackKey
+            synthBasePosMs = max(0L, positionMs)
+            synthBaseElapsedMs = SystemClock.elapsedRealtime()
             return
         }
 
