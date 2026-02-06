@@ -35,9 +35,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.abs
 
 class ChatboxViewModel(
     private val userPreferencesRepository: UserPreferencesRepository
@@ -50,15 +50,17 @@ class ChatboxViewModel(
         private const val CYCLE_INTERVAL_SECONDS_LOCKED = 10
         private const val MUSIC_REFRESH_SECONDS_LOCKED = 2
 
-        // ✅ VRChat chatbox limits you asked for
+        // ✅ VRChat limits
         private const val VRC_MAX_CHARS = 144
         private const val VRC_MAX_LINES = 9
 
         // ✅ send floor (DO NOT go faster than this)
         private const val SEND_FLOOR_MS = 2_000L
 
-        // ✅ track-change grace window for missing position updates (fast skipping)
-        private const val TRACK_CHANGE_GRACE_MS = 8_000L
+        // ✅ Now Playing: metadata stabilization to prevent "wrong song" on rapid skips
+        private const val META_STABLE_MS = 1_100L          // how long metadata must stay consistent
+        private const val META_CONFIRM_MOVE_MS = 900L       // how much position must advance to confirm
+        private const val META_GIVE_UP_MS = 2_400L           // after this, accept stable metadata even if movement is weak
 
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
@@ -268,32 +270,25 @@ class ChatboxViewModel(
 
     private var nowPlayingJob: Job? = null
 
-    // ---- Robust pause/progress inference with virtual clock (fast skipping safe) ----
-    private enum class PlaybackConfidence { PLAYING, PAUSED, UNKNOWN }
-    private var playbackConfidence: PlaybackConfidence = PlaybackConfidence.UNKNOWN
+    // Now Playing "inference" to avoid stuck Paused on skip/back:
+    private var inferredIsPlaying = false
+    private var lastTrackKeyForInference: String = ""
+    private var lastInferredPosMs: Long = 0L
+    private var lastInferredSampleTimeMs: Long = 0L
+    private var lastMovementAtMs: Long = 0L
 
-    private var lastTrackKey: String = ""
-    private var lastTrackChangeAtElapsedMs: Long = 0L
+    // ✅ Now Playing metadata stabilizer (prevents wrong song on rapid skips)
+    private var confirmedTrackKey: String = ""
+    private var confirmedTitle: String = ""
+    private var confirmedArtist: String = ""
+    private var confirmedDurationMs: Long = 0L
 
-    // Virtual position clock (continues even if notifications freeze position)
-    private var virtualBasePosMs: Long = 0L
-    private var virtualBaseAtElapsedMs: Long = 0L
-
-    // Sampling for confidence
-    private var lastSamplePosMs: Long = 0L
-    private var lastSampleAtElapsedMs: Long = 0L
-    private var lastMovementAtElapsedMs: Long = 0L
-    private var unknownSinceElapsedMs: Long = 0L
-
-    // Latest snapshot cache
-    private var npTitleRaw: String = ""
-    private var npArtistRaw: String = ""
-    private var npDurationMs: Long = 0L
-    private var npPositionMs: Long = 0L
-    private var npPositionUpdateElapsedMs: Long = 0L
-    private var npSpeed: Float = 1f
-    private var npReportedIsPlaying: Boolean = false
-    private var npDetected: Boolean = false
+    private var pendingTrackKey: String = ""
+    private var pendingTitle: String = ""
+    private var pendingArtist: String = ""
+    private var pendingDurationMs: Long = 0L
+    private var pendingSinceMs: Long = 0L
+    private var pendingStartPosMs: Long = 0L
 
     // =========================
     // UI clutter controls (persisted)
@@ -330,6 +325,7 @@ class ChatboxViewModel(
     private var nowPlayingPositionMs: Long = 0L
     private var nowPlayingPositionUpdateTimeMs: Long = 0L
     private var nowPlayingSpeed: Float = 1f
+    private var nowPlayingReportedIsPlaying: Boolean = false
 
     var debugLastAfkOsc by mutableStateOf("")
         private set
@@ -368,12 +364,14 @@ class ChatboxViewModel(
             }
         }
 
+        // ✅ Preserve exact user text when loading cycle lines.
         viewModelScope.launch {
             userPreferencesRepository.cycleMessages.collect { text ->
                 setCycleLinesFromTextPreserve(text)
             }
         }
 
+        // ✅ Always enforce locked value at runtime.
         viewModelScope.launch {
             userPreferencesRepository.cycleInterval.collect {
                 cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
@@ -415,27 +413,35 @@ class ChatboxViewModel(
                 listenerConnected = s.listenerConnected
                 activePackage = if (s.activePackage.isBlank()) "(none)" else s.activePackage
                 nowPlayingDetected = s.detected
-                lastNowPlayingTitle = if (s.title.isBlank()) "(blank)" else s.title
-                lastNowPlayingArtist = if (s.artist.isBlank()) "(blank)" else s.artist
 
+                // Keep raw timing/progress always up to date
                 nowPlayingDurationMs = s.durationMs
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
+                nowPlayingReportedIsPlaying = s.isPlaying
 
-                // cache snapshot
-                npTitleRaw = s.title
-                npArtistRaw = s.artist
-                npDurationMs = s.durationMs
-                npPositionMs = s.positionMs
-                npPositionUpdateElapsedMs = s.positionUpdateTimeMs
-                npSpeed = s.playbackSpeed
-                npReportedIsPlaying = s.isPlaying
-                npDetected = s.detected
+                // Update playing inference first (uses raw metadata key)
+                updateInferredPlaying(
+                    title = s.title,
+                    artist = s.artist,
+                    durationMs = s.durationMs,
+                    positionMs = s.positionMs,
+                    reportedIsPlaying = s.isPlaying,
+                    playbackSpeed = s.playbackSpeed
+                )
+                nowPlayingIsPlaying = inferredIsPlaying
 
-                updatePlaybackConfidenceFromSnapshot()
+                // Stabilize metadata to prevent "wrong song" on rapid skips
+                stabilizeNowPlayingMetadata(
+                    rawTitle = s.title,
+                    rawArtist = s.artist,
+                    rawDurationMs = s.durationMs,
+                    positionMs = s.positionMs,
+                    reportedIsPlaying = s.isPlaying,
+                    inferredIsPlaying = inferredIsPlaying
+                )
 
-                nowPlayingIsPlaying = (playbackConfidence == PlaybackConfidence.PLAYING)
                 rebuildCombinedPreviewOnly()
             }
         }
@@ -709,6 +715,7 @@ class ChatboxViewModel(
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
+                // NEVER send faster than 2s
                 val now = System.currentTimeMillis()
                 val nextAllowed = lastCombinedSendMs + SEND_FLOOR_MS
                 val waitMs = max(0L, nextAllowed - now)
@@ -765,7 +772,7 @@ class ChatboxViewModel(
         if (combined.isBlank()) return
 
         val nowMs = System.currentTimeMillis()
-        if (nowMs - lastCombinedSendMs < SEND_FLOOR_MS) return // ✅ never faster than 2 seconds
+        if (nowMs - lastCombinedSendMs < SEND_FLOOR_MS) return
 
         sendToVrchatRaw(combined, local, addToConversation = false)
         lastCombinedSendMs = nowMs
@@ -804,17 +811,13 @@ class ChatboxViewModel(
     // Now Playing builder
     // =========================
     private fun buildNowPlayingLines(): List<String> {
-        // Update inference on every build (fixes frozen progress when notifications don't update)
-        updatePlaybackConfidenceFromSnapshot()
-        nowPlayingIsPlaying = (playbackConfidence == PlaybackConfidence.PLAYING)
-
         val title = if (spotifyDemoEnabled && !nowPlayingDetected) "Pretty Girl" else lastNowPlayingTitle
         val artist = if (spotifyDemoEnabled && !nowPlayingDetected) "Clairo" else lastNowPlayingArtist
 
         if (!spotifyDemoEnabled && !nowPlayingDetected) return emptyList()
 
-        val safeTitle = title.takeIf { it != "(blank)" } ?: ""
-        val safeArtist = artist.takeIf { it != "(blank)" } ?: ""
+        val safeTitle = title.takeIf { it != "(blank)" }?.trim().orEmpty()
+        val safeArtist = artist.takeIf { it != "(blank)" }?.trim().orEmpty()
 
         val maxLine = 42
         val twoLineBudget = maxLine * 2
@@ -832,89 +835,28 @@ class ChatboxViewModel(
         val dur = if (spotifyDemoEnabled && !nowPlayingDetected) 205_000L else nowPlayingDurationMs
         val posSnapshot = if (spotifyDemoEnabled && !nowPlayingDetected) 78_000L else nowPlayingPositionMs
 
-        // IMPORTANT: use virtual clock fallback so progress moves during rapid skips
-        val pos = estimatePositionMsWithVirtualFallback(
-            trackKey = lastTrackKey,
-            positionMs = posSnapshot,
-            positionUpdateElapsedMs = nowPlayingPositionUpdateTimeMs,
-            speed = nowPlayingSpeed,
-            durationMs = max(1L, dur),
-            reportedIsPlaying = npReportedIsPlaying
-        )
-
-        // Bar animates unless we are confidently paused
-        val barIsPlaying = playbackConfidence != PlaybackConfidence.PAUSED
+        val pos = if (nowPlayingIsPlaying && dur > 0L) {
+            val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
+            val adj = (elapsed * nowPlayingSpeed).toLong()
+            (posSnapshot + max(0L, adj)).coerceAtMost(dur)
+        } else {
+            posSnapshot
+        }
 
         val bar = renderProgressBar(
             preset = spotifyPreset,
             posMs = pos,
             durMs = max(1L, dur),
-            isPlaying = barIsPlaying
+            isPlaying = nowPlayingIsPlaying
         )
 
         val time = "${fmtTime(pos)} / ${fmtTime(max(1L, dur))}"
-        val status = if (playbackConfidence == PlaybackConfidence.PAUSED) "Paused" else ""
+        val status = if (!nowPlayingIsPlaying) "Paused" else ""
 
         val line2 = listOf(bar, time).joinToString(" ").trim()
         val line3 = status.takeIf { it.isNotBlank() }
 
         return listOfNotNull(line1.takeIf { it.isNotBlank() }, line2.takeIf { it.isNotBlank() }, line3)
-    }
-
-    /**
-     * If notifications stop updating position (common when skipping fast),
-     * we keep our own "virtual" position clock moving while reportedIsPlaying is true
-     * (and during the grace window after a track change).
-     */
-    private fun estimatePositionMsWithVirtualFallback(
-        trackKey: String,
-        positionMs: Long,
-        positionUpdateElapsedMs: Long,
-        speed: Float,
-        durationMs: Long,
-        reportedIsPlaying: Boolean
-    ): Long {
-        val dur = max(1L, durationMs)
-        val nowElapsed = SystemClock.elapsedRealtime()
-
-        // Try "official" projection first if we have a valid update time.
-        val canProjectOfficial = (positionUpdateElapsedMs > 0L && reportedIsPlaying && speed > 0.01f)
-        val official = if (canProjectOfficial) {
-            val elapsed = max(0L, nowElapsed - positionUpdateElapsedMs)
-            (positionMs + (elapsed * speed).toLong()).coerceIn(0L, dur)
-        } else null
-
-        // Decide if official seems usable: if positionUpdateElapsedMs is stale, it won't help.
-        // Treat as stale if it's older than ~12s.
-        val officialStale = if (positionUpdateElapsedMs > 0L) (nowElapsed - positionUpdateElapsedMs) > 12_000L else true
-
-        val inGrace = (nowElapsed - lastTrackChangeAtElapsedMs) <= TRACK_CHANGE_GRACE_MS
-        val shouldRunVirtual = (reportedIsPlaying || inGrace)
-
-        // If official is good and not stale, use it and also resync virtual base to it.
-        if (official != null && !officialStale) {
-            // Resync virtual base so virtual stays aligned
-            virtualBasePosMs = official
-            virtualBaseAtElapsedMs = nowElapsed
-            return official
-        }
-
-        // Otherwise: virtual fallback (keeps moving during rapid skipping)
-        if (shouldRunVirtual) {
-            // If we changed track but trackKey isn't set yet, still move from current position
-            // Ensure virtual base is initialized for this track
-            if (virtualBaseAtElapsedMs == 0L) {
-                virtualBasePosMs = positionMs.coerceIn(0L, dur)
-                virtualBaseAtElapsedMs = nowElapsed
-            }
-
-            val elapsed = max(0L, nowElapsed - virtualBaseAtElapsedMs)
-            val s = if (speed > 0.01f) speed else 1f
-            return (virtualBasePosMs + (elapsed * s).toLong()).coerceIn(0L, dur)
-        }
-
-        // If not playing and not in grace, just return snapshot
-        return positionMs.coerceIn(0L, dur)
     }
 
     // =========================
@@ -925,7 +867,7 @@ class ChatboxViewModel(
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> {
+            1 -> { // Love (10 chars total)
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -933,7 +875,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> {
+            2 -> { // Minimal (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -941,7 +883,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // ✅ Crystal stays ⟡
+            3 -> { // Crystal (10 chars) ✅ keep ⟡
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -951,7 +893,7 @@ class ChatboxViewModel(
 
             4 -> renderSoundwaveBar(p, posMs, isPlaying)
 
-            else -> {
+            else -> { // Geometry (10 chars)
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -981,6 +923,12 @@ class ChatboxViewModel(
 
     private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
+    /**
+     * ✅ EXACT LENGTH = 10 chars total:
+     * - 8 wave chars
+     * - plus "[" and "]" around the progress index → +2
+     * ✅ Marker: techy square ▣ (soundwave only)
+     */
     private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
         val slots = 8
         val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
@@ -1001,7 +949,7 @@ class ChatboxViewModel(
         for (i in 0 until slots) {
             if (i == idx) {
                 out.append('[')
-                out.append('▣') // ✅ square marker (soundwave only)
+                out.append('▣')
                 out.append(']')
             } else {
                 out.append(chars[i])
@@ -1066,104 +1014,157 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Playback inference: movement-based, but fast-skip-safe + virtual clock
+    // Fix 1: infer playing from movement (prevents stuck Paused on skips)
     // =========================
-    private fun resetSampling(nowElapsed: Long, startPosMs: Long) {
-        lastSampleAtElapsedMs = nowElapsed
-        lastSamplePosMs = startPosMs
-        lastMovementAtElapsedMs = nowElapsed
-        unknownSinceElapsedMs = nowElapsed
-    }
+    private fun updateInferredPlaying(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        positionMs: Long,
+        reportedIsPlaying: Boolean,
+        playbackSpeed: Float
+    ) {
+        val nowMs = System.currentTimeMillis()
 
-    private fun updatePlaybackConfidenceFromSnapshot() {
-        if (!npDetected && !spotifyDemoEnabled) {
-            playbackConfidence = PlaybackConfidence.UNKNOWN
-            return
-        }
-
-        val nowElapsed = SystemClock.elapsedRealtime()
-        val key = "${npTitleRaw.trim()}|${npArtistRaw.trim()}|$npDurationMs"
-        val trackChanged = key != lastTrackKey && (npTitleRaw.isNotBlank() || npArtistRaw.isNotBlank())
+        val key = "${title.trim()}|${artist.trim()}|$durationMs"
+        val trackChanged = key != lastTrackKeyForInference && (title.isNotBlank() || artist.isNotBlank())
 
         if (trackChanged) {
-            lastTrackKey = key
-            lastTrackChangeAtElapsedMs = nowElapsed
-
-            // Initialize virtual clock for new track immediately
-            virtualBasePosMs = npPositionMs.coerceIn(0L, max(1L, npDurationMs))
-            virtualBaseAtElapsedMs = nowElapsed
-
-            playbackConfidence = PlaybackConfidence.UNKNOWN
-            resetSampling(nowElapsed, virtualBasePosMs)
+            lastTrackKeyForInference = key
+            lastInferredPosMs = positionMs
+            lastInferredSampleTimeMs = nowMs
+            lastMovementAtMs = nowMs
+            inferredIsPlaying = true
             return
         }
 
-        // If no sampling history yet
-        if (lastSampleAtElapsedMs == 0L) {
-            // keep virtual clock alive
-            if (virtualBaseAtElapsedMs == 0L) {
-                virtualBasePosMs = npPositionMs.coerceIn(0L, max(1L, npDurationMs))
-                virtualBaseAtElapsedMs = nowElapsed
-            }
-            playbackConfidence = PlaybackConfidence.UNKNOWN
-            resetSampling(nowElapsed, virtualBasePosMs)
-            return
-        }
+        val dt = max(1L, nowMs - lastInferredSampleTimeMs)
+        val dp = positionMs - lastInferredPosMs
 
-        // Use our position estimator (with virtual fallback) for movement detection
-        val dur = max(1L, npDurationMs)
-        val estPos = estimatePositionMsWithVirtualFallback(
-            trackKey = lastTrackKey,
-            positionMs = npPositionMs,
-            positionUpdateElapsedMs = npPositionUpdateElapsedMs,
-            speed = npSpeed,
-            durationMs = dur,
-            reportedIsPlaying = npReportedIsPlaying
-        )
+        lastInferredSampleTimeMs = nowMs
+        lastInferredPosMs = positionMs
 
-        val dt = max(1L, nowElapsed - lastSampleAtElapsedMs)
-        val dp = estPos - lastSamplePosMs
-
-        lastSampleAtElapsedMs = nowElapsed
-        lastSamplePosMs = estPos
-
-        // Movement threshold tuned for ~2s sampling
-        val movedEnough = dp >= 700L
+        // consider movement if position advanced enough for the sampling interval
+        val movedEnough = dp > 500L
 
         if (movedEnough) {
-            playbackConfidence = PlaybackConfidence.PLAYING
-            lastMovementAtElapsedMs = nowElapsed
-            // resync virtual base so it doesn't drift
-            virtualBasePosMs = estPos
-            virtualBaseAtElapsedMs = nowElapsed
+            inferredIsPlaying = true
+            lastMovementAtMs = nowMs
             return
         }
 
-        val inGrace = (nowElapsed - lastTrackChangeAtElapsedMs) <= TRACK_CHANGE_GRACE_MS
-        if (inGrace) {
-            // during grace: never call it PAUSED just because position updates are missing
-            playbackConfidence = PlaybackConfidence.UNKNOWN
+        val noMoveForMs = nowMs - lastMovementAtMs
+        if (noMoveForMs >= 4_500L) {
+            inferredIsPlaying = false
             return
         }
 
-        val noMoveFor = nowElapsed - lastMovementAtElapsedMs
+        if (reportedIsPlaying) inferredIsPlaying = true
+        if (abs(playbackSpeed) < 0.01f && noMoveForMs >= 4_500L) inferredIsPlaying = false
+    }
 
-        // If system explicitly says playing, don't declare paused unless it's been a LONG time with zero movement
-        if (npReportedIsPlaying) {
-            if (noMoveFor >= 18_000L) playbackConfidence = PlaybackConfidence.PAUSED
-            else playbackConfidence = PlaybackConfidence.UNKNOWN
+    // =========================
+    // Fix 2: metadata stabilization (prevents wrong song on rapid skips)
+    // =========================
+    private fun stabilizeNowPlayingMetadata(
+        rawTitle: String,
+        rawArtist: String,
+        rawDurationMs: Long,
+        positionMs: Long,
+        reportedIsPlaying: Boolean,
+        inferredIsPlaying: Boolean
+    ) {
+        val now = System.currentTimeMillis()
+
+        val t = rawTitle.trim()
+        val a = rawArtist.trim()
+        val hasMeta = t.isNotBlank() || a.isNotBlank()
+
+        // If nothing detected, clear confirmed (but keep UI placeholders)
+        if (!hasMeta) {
+            confirmedTrackKey = ""
+            confirmedTitle = ""
+            confirmedArtist = ""
+            confirmedDurationMs = 0L
+
+            pendingTrackKey = ""
+            pendingTitle = ""
+            pendingArtist = ""
+            pendingDurationMs = 0L
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = "(blank)"
+            lastNowPlayingArtist = "(blank)"
             return
         }
 
-        // If system says not playing, we can settle to PAUSED after a short window
-        if (noMoveFor >= 4_500L) {
-            playbackConfidence = PlaybackConfidence.PAUSED
+        val rawKey = "${t}|${a}|$rawDurationMs"
+
+        // First ever: accept immediately
+        if (confirmedTrackKey.isBlank()) {
+            confirmedTrackKey = rawKey
+            confirmedTitle = t
+            confirmedArtist = a
+            confirmedDurationMs = rawDurationMs
+            lastNowPlayingTitle = if (t.isBlank()) "(blank)" else t
+            lastNowPlayingArtist = if (a.isBlank()) "(blank)" else a
+
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
             return
         }
 
-        if (playbackConfidence == PlaybackConfidence.UNKNOWN && (nowElapsed - unknownSinceElapsedMs) > 20_000L) {
-            playbackConfidence = PlaybackConfidence.PAUSED
+        // No change: just keep confirmed fields (UI uses them)
+        if (rawKey == confirmedTrackKey && pendingTrackKey.isBlank()) {
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
         }
+
+        // New metadata seen (or pending already exists)
+        if (pendingTrackKey.isBlank() || rawKey != pendingTrackKey) {
+            // Start/replace pending candidate immediately on any new rawKey
+            pendingTrackKey = rawKey
+            pendingTitle = t
+            pendingArtist = a
+            pendingDurationMs = rawDurationMs
+            pendingSinceMs = now
+            pendingStartPosMs = positionMs.coerceAtLeast(0L)
+
+            // Keep showing confirmed (this is the whole point)
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Pending key still the same: check confirmation conditions
+        val stableFor = now - pendingSinceMs
+        val movedSincePending = (positionMs - pendingStartPosMs)
+
+        val canUsePlayingHint = reportedIsPlaying || inferredIsPlaying
+        val confirmByMovement = movedSincePending >= META_CONFIRM_MOVE_MS
+        val confirmByStability = stableFor >= META_STABLE_MS && canUsePlayingHint
+        val confirmByGiveUp = stableFor >= META_GIVE_UP_MS && canUsePlayingHint
+
+        if (confirmByMovement || confirmByStability || confirmByGiveUp) {
+            confirmedTrackKey = pendingTrackKey
+            confirmedTitle = pendingTitle
+            confirmedArtist = pendingArtist
+            confirmedDurationMs = pendingDurationMs
+
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Still not confirmed: keep showing confirmed
+        lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+        lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
     }
 }
 
