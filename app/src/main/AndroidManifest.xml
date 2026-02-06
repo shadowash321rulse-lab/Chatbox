@@ -9,10 +9,10 @@
     <!-- For ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- ✅ REQUIRED for foreground service -->
+    <!-- Keep alive while screen is off -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- Optional (harmless): lets you show the notification on Android 13+ if user allows it -->
+    <!-- Helps on Android 13+ so the foreground notification can show -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -27,8 +27,11 @@
         tools:targetApi="31">
 
         <!-- Overlay -->
+        <service android:name=".overlay.OverlayService" />
+
+        <!-- Keep-alive foreground service (NEW) -->
         <service
-            android:name=".overlay.OverlayService"
+            android:name=".service.ChatboxKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
