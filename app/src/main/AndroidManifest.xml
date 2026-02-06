@@ -9,6 +9,11 @@
     <!-- For ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Keepalive foreground notification -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ (safe to include even if not enforced on your target) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
     <application
         android:name="com.scrapw.chatbox.ChatboxApplication"
         android:allowBackup="true"
@@ -27,7 +32,8 @@
         <service
             android:name=".NowPlayingListenerService"
             android:exported="false"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
