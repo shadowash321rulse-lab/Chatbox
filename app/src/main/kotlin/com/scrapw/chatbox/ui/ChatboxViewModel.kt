@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
@@ -24,7 +23,6 @@ import com.scrapw.chatbox.ChatboxApplication
 import com.scrapw.chatbox.NowPlayingState
 import com.scrapw.chatbox.data.UserPreferencesRepository
 import com.scrapw.chatbox.osc.ChatboxOSC
-import com.scrapw.chatbox.service.ChatboxKeepAliveService
 import com.scrapw.chatbox.ui.mainScreen.ConversationUiState
 import com.scrapw.chatbox.ui.mainScreen.Message
 import kotlinx.coroutines.Job
@@ -67,10 +65,6 @@ class ChatboxViewModel(
         // ✅ If position resets near the start, we treat it as a definite track switch
         private const val POS_RESET_CONFIRM_MS = 1_800L
 
-        // ✅ Pause detection
-        private const val NO_MOVE_PAUSE_MS = 5_000L
-        private const val UI_TICK_MS = 500L
-
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
 
@@ -91,39 +85,8 @@ class ChatboxViewModel(
     }
 
     override fun onCleared() {
-        uiTickJob?.cancel()
-        stopKeepAlive()
         stopAll(clearFromChatbox = false)
         super.onCleared()
-    }
-
-    // =========================
-    // Keep-alive Foreground Service
-    // =========================
-    private fun startKeepAlive() {
-        val ctx = ChatboxApplication.instance.applicationContext
-        val i = Intent(ctx, ChatboxKeepAliveService::class.java).apply {
-            action = ChatboxKeepAliveService.ACTION_START
-        }
-        // Use startForegroundService for O+
-        ContextCompat.startForegroundService(ctx, i)
-    }
-
-    private fun stopKeepAlive() {
-        val ctx = ChatboxApplication.instance.applicationContext
-        val i = Intent(ctx, ChatboxKeepAliveService::class.java).apply {
-            action = ChatboxKeepAliveService.ACTION_STOP
-        }
-        try {
-            ctx.startService(i)
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun refreshKeepAliveState() {
-        // Keep alive if ANY background sender is active
-        val need = spotifyEnabled || cycleEnabled || afkEnabled
-        if (need) startKeepAlive() else stopKeepAlive()
     }
 
     // =========================
@@ -140,9 +103,7 @@ class ChatboxViewModel(
         osc.typing = false
 
         val txt = messageText.value.text
-        conversationUiState.addMessage(
-            Message(txt, true, Instant.now())
-        )
+        conversationUiState.addMessage(Message(txt, true, Instant.now()))
 
         messageText.value = TextFieldValue("", TextRange.Zero)
         stashedMessage = ""
@@ -310,15 +271,15 @@ class ChatboxViewModel(
 
     private var nowPlayingJob: Job? = null
 
+    // ---- Playing inference (plus pause restore) ----
     private var inferredIsPlaying = false
     private var lastTrackKeyForInference: String = ""
+    private var lastInferredPosMs: Long = 0L
+    private var lastInferredSampleTimeMs: Long = 0L
     private var lastMovementAtMs: Long = 0L
     private var pauseCandidateSinceMs: Long = 0L
 
-    private var lastEffectivePosForTick: Long = 0L
-    private var lastEffectiveTickAtMs: Long = 0L
-    private var uiTickJob: Job? = null
-
+    // ---- Metadata stabilizer (song name follows progress) ----
     private var confirmedTrackKey: String = ""
     private var confirmedTitle: String = ""
     private var confirmedArtist: String = ""
@@ -401,7 +362,6 @@ class ChatboxViewModel(
         viewModelScope.launch {
             userPreferencesRepository.cycleEnabled.collect {
                 cycleEnabled = it
-                refreshKeepAliveState()
                 rebuildCombinedPreviewOnly()
             }
         }
@@ -448,39 +408,30 @@ class ChatboxViewModel(
             userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
         }
 
-        uiTickJob?.cancel()
-        uiTickJob = viewModelScope.launch {
-            while (true) {
-                tickNowPlayingMovement()
-                nowPlayingIsPlaying = computeDisplayedPlaying()
-                rebuildCombinedPreviewOnly()
-                delay(UI_TICK_MS)
-            }
-        }
-
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
                 activePackage = if (s.activePackage.isBlank()) "(none)" else s.activePackage
                 nowPlayingDetected = s.detected
 
+                // Always keep timing/progress updated (bar + time)
                 nowPlayingDurationMs = s.durationMs
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingReportedIsPlaying = s.isPlaying
 
-                val key = "${s.title.trim()}|${s.artist.trim()}|${s.durationMs}"
-                val trackChanged = key != lastTrackKeyForInference && (s.title.isNotBlank() || s.artist.isNotBlank())
-                if (trackChanged) {
-                    lastTrackKeyForInference = key
-                    lastMovementAtMs = System.currentTimeMillis()
-                    pauseCandidateSinceMs = 0L
-                    inferredIsPlaying = true
-                    lastEffectivePosForTick = nowPlayingPositionMs.coerceAtLeast(0L)
-                    lastEffectiveTickAtMs = System.currentTimeMillis()
-                }
+                // 1) Update inference
+                updateInferredPlaying(
+                    title = s.title,
+                    artist = s.artist,
+                    durationMs = s.durationMs,
+                    positionMs = s.positionMs,
+                    reportedIsPlaying = s.isPlaying,
+                    playbackSpeed = s.playbackSpeed
+                )
 
+                // 2) Stabilize metadata
                 stabilizeNowPlayingMetadata(
                     rawTitle = s.title,
                     rawArtist = s.artist,
@@ -490,10 +441,31 @@ class ChatboxViewModel(
                     inferredIsPlaying = inferredIsPlaying
                 )
 
+                // Final displayed playing state
                 nowPlayingIsPlaying = computeDisplayedPlaying()
+
                 rebuildCombinedPreviewOnly()
             }
         }
+    }
+
+    private fun computeDisplayedPlaying(): Boolean {
+        val now = System.currentTimeMillis()
+        val noMoveForMs = now - lastMovementAtMs
+
+        // Only allow pause if (a) system reports paused for a bit AND (b) we truly see no movement.
+        val systemPausedHeld =
+            !nowPlayingReportedIsPlaying &&
+                pauseCandidateSinceMs > 0L &&
+                (now - pauseCandidateSinceMs) >= 1_200L
+
+        if (systemPausedHeld && noMoveForMs >= 5_000L) return false
+
+        // If system says playing, prefer playing.
+        if (nowPlayingReportedIsPlaying) return true
+
+        // Otherwise, use inferred (keeps it stable on skip/back glitches)
+        return inferredIsPlaying
     }
 
     // =========================
@@ -518,11 +490,19 @@ class ChatboxViewModel(
     private fun getApplicationIdSafely(): String = "com.scrapw.chatbox"
 
     // =========================
-    // Enable flags (dashboard toggles)
+    // KILL switch (USED BY UI)
+    // =========================
+    fun killStopAndClear(local: Boolean = false) {
+        stopAll(clearFromChatbox = false)
+        clearChatbox(local)
+        rebuildCombinedPreviewOnly(forceClearIfAllOff = true)
+    }
+
+    // =========================
+    // Enable flags
     // =========================
     fun setAfkEnabledFlag(enabled: Boolean) {
         afkEnabled = enabled
-        refreshKeepAliveState()
         rebuildCombinedPreviewOnly()
         if (!enabled) stopAfkSender(clearFromChatbox = true)
     }
@@ -530,14 +510,12 @@ class ChatboxViewModel(
     fun setCycleEnabledFlag(enabled: Boolean) {
         cycleEnabled = enabled
         viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(enabled) }
-        refreshKeepAliveState()
         rebuildCombinedPreviewOnly()
         if (!enabled) stopCycle(clearFromChatbox = true)
     }
 
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
-        refreshKeepAliveState()
         rebuildCombinedPreviewOnly()
         if (!enabled) stopNowPlayingSender(clearFromChatbox = true)
     }
@@ -607,11 +585,97 @@ class ChatboxViewModel(
     }
 
     // =========================
+    // Preset previews (USED BY UI)
+    // =========================
+    fun getAfkPresetPreview(slot: Int): String {
+        val i = slot.coerceIn(1, 3) - 1
+        return afkPresetTexts[i].trim()
+    }
+
+    fun getCyclePresetPreview(slot: Int): String {
+        val i = slot.coerceIn(1, 5) - 1
+        val firstLine = cyclePresetMessages[i].lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        return firstLine
+    }
+
+    fun getMusicPresetName(preset: Int): String = when (preset.coerceIn(1, 5)) {
+        1 -> "Love"
+        2 -> "Minimal"
+        3 -> "Crystal"
+        4 -> "Soundwave"
+        else -> "Geometry"
+    }
+
+    fun renderMusicPresetPreview(preset: Int, t: Float): String {
+        val p = t.coerceIn(0f, 1f)
+        val pos = (p * 1000f).toLong()
+        return renderProgressBar(preset, pos, 1000L, isPlaying = true)
+    }
+
+    // =========================
+    // Preset save/load (USED BY UI)
+    // =========================
+    suspend fun saveAfkPreset(slot: Int, text: String) {
+        val s = slot.coerceIn(1, 3)
+        val idx = s - 1
+        afkPresetTexts[idx] = text
+        when (s) {
+            1 -> userPreferencesRepository.saveAfkPreset1(text)
+            2 -> userPreferencesRepository.saveAfkPreset2(text)
+            else -> userPreferencesRepository.saveAfkPreset3(text)
+        }
+    }
+
+    suspend fun loadAfkPreset(slot: Int) {
+        val txt = when (slot.coerceIn(1, 3)) {
+            1 -> userPreferencesRepository.afkPreset1.first()
+            2 -> userPreferencesRepository.afkPreset2.first()
+            else -> userPreferencesRepository.afkPreset3.first()
+        }
+        updateAfkText(txt)
+    }
+
+    suspend fun saveCyclePreset(slot: Int, lines: List<String>) {
+        val s = slot.coerceIn(1, 5)
+        val idx = s - 1
+
+        val messages = lines.map { it.trim() }.filter { it.isNotEmpty() }.take(10).joinToString("\n")
+        val interval = CYCLE_INTERVAL_SECONDS_LOCKED
+
+        cyclePresetMessages[idx] = messages
+        cyclePresetIntervals[idx] = interval
+
+        when (s) {
+            1 -> userPreferencesRepository.saveCyclePreset1(messages, interval)
+            2 -> userPreferencesRepository.saveCyclePreset2(messages, interval)
+            3 -> userPreferencesRepository.saveCyclePreset3(messages, interval)
+            4 -> userPreferencesRepository.saveCyclePreset4(messages, interval)
+            else -> userPreferencesRepository.saveCyclePreset5(messages, interval)
+        }
+    }
+
+    suspend fun loadCyclePreset(slot: Int) {
+        val s = slot.coerceIn(1, 5)
+        val (messages, _) = when (s) {
+            1 -> userPreferencesRepository.cyclePreset1Messages.first() to userPreferencesRepository.cyclePreset1Interval.first()
+            2 -> userPreferencesRepository.cyclePreset2Messages.first() to userPreferencesRepository.cyclePreset2Interval.first()
+            3 -> userPreferencesRepository.cyclePreset3Messages.first() to userPreferencesRepository.cyclePreset3Interval.first()
+            4 -> userPreferencesRepository.cyclePreset4Messages.first() to userPreferencesRepository.cyclePreset4Interval.first()
+            else -> userPreferencesRepository.cyclePreset5Messages.first() to userPreferencesRepository.cyclePreset5Interval.first()
+        }
+
+        cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
+        viewModelScope.launch { userPreferencesRepository.saveCycleInterval(cycleIntervalSeconds) }
+
+        setCycleLinesFromTextPreserve(messages)
+        persistCycleLinesPreserve()
+    }
+
+    // =========================
     // AFK sender
     // =========================
     fun startAfkSender(local: Boolean = false) {
         if (!afkEnabled) return
-        refreshKeepAliveState()
         afkJob?.cancel()
         afkJob = viewModelScope.launch {
             while (afkEnabled) {
@@ -624,7 +688,6 @@ class ChatboxViewModel(
     fun stopAfkSender(clearFromChatbox: Boolean) {
         afkJob?.cancel()
         afkJob = null
-        refreshKeepAliveState()
         if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
     }
 
@@ -639,7 +702,6 @@ class ChatboxViewModel(
         val msgs = cycleLines.map { it.trim() }.filter { it.isNotEmpty() }.take(10)
         if (!cycleEnabled || msgs.isEmpty()) return
 
-        refreshKeepAliveState()
         viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(true) }
         persistCycleLinesPreserve()
         cycleIntervalSeconds = CYCLE_INTERVAL_SECONDS_LOCKED
@@ -663,7 +725,6 @@ class ChatboxViewModel(
     fun stopCycle(clearFromChatbox: Boolean) {
         cycleJob?.cancel()
         cycleJob = null
-        refreshKeepAliveState()
         if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
     }
 
@@ -672,7 +733,6 @@ class ChatboxViewModel(
     // =========================
     fun startNowPlayingSender(local: Boolean = false) {
         if (!spotifyEnabled) return
-        refreshKeepAliveState()
         nowPlayingJob?.cancel()
         nowPlayingJob = viewModelScope.launch {
             while (spotifyEnabled) {
@@ -690,15 +750,17 @@ class ChatboxViewModel(
     fun stopNowPlayingSender(clearFromChatbox: Boolean) {
         nowPlayingJob?.cancel()
         nowPlayingJob = null
-        refreshKeepAliveState()
         if (clearFromChatbox) rebuildAndMaybeSendCombined(forceSend = true, forceClearIfAllOff = true)
+    }
+
+    fun sendNowPlayingOnce(local: Boolean = false) {
+        rebuildAndMaybeSendCombined(forceSend = true, local = local)
     }
 
     fun stopAll(clearFromChatbox: Boolean) {
         stopCycle(clearFromChatbox = false)
         stopNowPlayingSender(clearFromChatbox = false)
         stopAfkSender(clearFromChatbox = false)
-        refreshKeepAliveState()
         if (clearFromChatbox) clearChatbox()
     }
 
@@ -818,182 +880,115 @@ class ChatboxViewModel(
     }
 
     // =========================
-    // Pause detection support
+    // Progress bars
     // =========================
-    private fun effectivePosNowMs(): Long {
-        val snap = nowPlayingPositionMs.coerceAtLeast(0L)
-        val dur = nowPlayingDurationMs.coerceAtLeast(0L)
-        val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
-        val speed = nowPlayingSpeed
-        val adv = if (elapsed > 0L) (elapsed.toFloat() * speed).toLong() else 0L
-        val eff = snap + max(0L, adv)
-        return if (dur > 0L) eff.coerceAtMost(dur) else eff
+    private fun renderProgressBar(preset: Int, posMs: Long, durMs: Long, isPlaying: Boolean): String {
+        val duration = max(1L, durMs)
+        val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
+
+        return when (preset.coerceIn(1, 5)) {
+            1 -> { // Love (10 chars total)
+                val innerSlots = 8
+                val idx = (p * (innerSlots - 1)).toInt()
+                val inner = CharArray(innerSlots) { '━' }
+                inner[idx] = '◉'
+                "♡" + inner.concatToString() + "♡"
+            }
+
+            2 -> { // Minimal (10 chars)
+                val slots = 10
+                val idx = (p * (slots - 1)).toInt()
+                val bg = CharArray(slots) { '─' }
+                bg[idx] = '◉'
+                bg.concatToString()
+            }
+
+            3 -> { // Crystal (10 chars) ✅ keep ⟡
+                val slots = 10
+                val idx = (p * (slots - 1)).toInt()
+                val bg = CharArray(slots) { '⟡' }
+                bg[idx] = '◉'
+                bg.concatToString()
+            }
+
+            4 -> renderSoundwaveBar(p, posMs, isPlaying)
+
+            else -> { // Geometry (10 chars)
+                val slots = 10
+                val idx = (p * (slots - 1)).toInt()
+                val out = CharArray(slots) { i ->
+                    when {
+                        i < idx -> '▣'
+                        i == idx -> '◉'
+                        else -> '▢'
+                    }
+                }
+                out.concatToString()
+            }
+        }
     }
 
-    private fun tickNowPlayingMovement() {
-        if (!spotifyEnabled) return
-        if (!nowPlayingDetected && !spotifyDemoEnabled) return
+    private val soundwavePatterns: List<IntArray> = listOf(
+        intArrayOf(6, 3, 6, 4, 7, 3, 6, 4, 7, 4, 6, 3),
+        intArrayOf(7, 4, 6, 3, 7, 5, 6, 3, 7, 4, 6, 5),
+        intArrayOf(5, 7, 4, 6, 3, 7, 4, 6, 3, 7, 4, 6),
+        intArrayOf(6, 4, 7, 5, 3, 6, 4, 7, 5, 3, 6, 4),
+        intArrayOf(7, 5, 3, 6, 4, 7, 5, 3, 6, 4, 7, 5),
+        intArrayOf(6, 3, 5, 7, 4, 6, 3, 5, 7, 4, 6, 3),
+        intArrayOf(5, 6, 7, 4, 3, 7, 6, 5, 4, 7, 6, 5),
+        intArrayOf(7, 6, 4, 7, 5, 3, 6, 7, 4, 6, 7, 5),
+        intArrayOf(6, 7, 5, 3, 6, 7, 5, 4, 7, 6, 4, 5),
+        intArrayOf(7, 4, 6, 7, 3, 5, 7, 4, 6, 7, 3, 5)
+    )
 
-        val nowMs = System.currentTimeMillis()
-        val eff = effectivePosNowMs()
+    private val soundwavePaused: IntArray = intArrayOf(4, 5, 4, 6, 4, 5, 4, 6, 4, 5, 4, 6)
 
-        if (lastEffectiveTickAtMs == 0L) {
-            lastEffectiveTickAtMs = nowMs
-            lastEffectivePosForTick = eff
-            lastMovementAtMs = nowMs
-            return
+    private fun renderSoundwaveBar(progress01: Float, posMs: Long, isPlaying: Boolean): String {
+        val slots = 8
+        val idx = (progress01 * (slots - 1)).toInt().coerceIn(0, slots - 1)
+
+        val patternIndex = if (isPlaying) {
+            ((posMs / 1400L) % soundwavePatterns.size).toInt()
+        } else -1
+
+        val base = if (patternIndex >= 0) soundwavePatterns[patternIndex] else soundwavePaused
+        val phase = if (isPlaying) ((posMs / 180L) % base.size).toInt() else ((posMs / 900L) % base.size).toInt()
+
+        val chars = CharArray(slots) { i ->
+            val amp = base[(i + phase) % base.size].coerceIn(1, 8)
+            ampToChar(amp)
         }
 
-        val dp = eff - lastEffectivePosForTick
-        lastEffectivePosForTick = eff
-        lastEffectiveTickAtMs = nowMs
-
-        val moved = dp >= 150L || abs(dp) >= 1_000L
-
-        if (moved) {
-            lastMovementAtMs = nowMs
-            pauseCandidateSinceMs = 0L
-            inferredIsPlaying = true
-            return
+        val out = StringBuilder(10)
+        for (i in 0 until slots) {
+            if (i == idx) {
+                out.append('[')
+                out.append('▣')
+                out.append(']')
+            } else {
+                out.append(chars[i])
+            }
         }
-
-        if (!nowPlayingReportedIsPlaying || abs(nowPlayingSpeed) < 0.01f) {
-            if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = nowMs
-        } else {
-            pauseCandidateSinceMs = 0L
-        }
+        return out.toString()
     }
 
-    private fun computeDisplayedPlaying(): Boolean {
-        val now = System.currentTimeMillis()
-        val noMoveForMs = now - lastMovementAtMs
-
-        val hardPause =
-            !nowPlayingReportedIsPlaying &&
-                pauseCandidateSinceMs > 0L &&
-                (now - pauseCandidateSinceMs) >= 1_200L
-
-        if (hardPause) return false
-        if (noMoveForMs >= NO_MOVE_PAUSE_MS) return false
-        return true
+    private fun ampToChar(a: Int): Char = when (a.coerceIn(1, 8)) {
+        1 -> '▁'
+        2 -> '▂'
+        3 -> '▃'
+        4 -> '▄'
+        5 -> '▅'
+        6 -> '▆'
+        7 -> '▇'
+        else -> '█'
     }
 
-    // =========================
-    // Metadata stabilization
-    // =========================
-    private fun stabilizeNowPlayingMetadata(
-        rawTitle: String,
-        rawArtist: String,
-        rawDurationMs: Long,
-        positionMs: Long,
-        reportedIsPlaying: Boolean,
-        inferredIsPlaying: Boolean
-    ) {
-        val now = System.currentTimeMillis()
-
-        val t = rawTitle.trim()
-        val a = rawArtist.trim()
-        val hasMeta = t.isNotBlank() || a.isNotBlank()
-
-        if (!hasMeta) {
-            confirmedTrackKey = ""
-            confirmedTitle = ""
-            confirmedArtist = ""
-            confirmedDurationMs = 0L
-
-            pendingTrackKey = ""
-            pendingTitle = ""
-            pendingArtist = ""
-            pendingDurationMs = 0L
-            pendingSinceMs = 0L
-            pendingStartPosMs = 0L
-
-            lastNowPlayingTitle = "(blank)"
-            lastNowPlayingArtist = "(blank)"
-            return
-        }
-
-        val rawKey = "${t}|${a}|$rawDurationMs"
-
-        if (confirmedTrackKey.isBlank()) {
-            confirmedTrackKey = rawKey
-            confirmedTitle = t
-            confirmedArtist = a
-            confirmedDurationMs = rawDurationMs
-            lastNowPlayingTitle = if (t.isBlank()) "(blank)" else t
-            lastNowPlayingArtist = if (a.isBlank()) "(blank)" else a
-            pendingTrackKey = ""
-            pendingSinceMs = 0L
-            return
-        }
-
-        if (rawKey == confirmedTrackKey && pendingTrackKey.isBlank()) {
-            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
-            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
-            return
-        }
-
-        val posLooksLikeNewTrack = positionMs in 0..POS_RESET_CONFIRM_MS
-        val durationChanged = (rawDurationMs > 0L && confirmedDurationMs > 0L && rawDurationMs != confirmedDurationMs)
-
-        if (rawKey != confirmedTrackKey && (posLooksLikeNewTrack || durationChanged)) {
-            confirmedTrackKey = rawKey
-            confirmedTitle = t
-            confirmedArtist = a
-            confirmedDurationMs = rawDurationMs
-
-            pendingTrackKey = ""
-            pendingSinceMs = 0L
-            pendingStartPosMs = 0L
-
-            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
-            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
-            return
-        }
-
-        if (pendingTrackKey.isBlank() || rawKey != pendingTrackKey) {
-            pendingTrackKey = rawKey
-            pendingTitle = t
-            pendingArtist = a
-            pendingDurationMs = rawDurationMs
-            pendingSinceMs = now
-            pendingStartPosMs = positionMs.coerceAtLeast(0L)
-
-            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
-            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
-            return
-        }
-
-        val stableFor = now - pendingSinceMs
-        val movedSincePending = (positionMs - pendingStartPosMs)
-
-        val canUsePlayingHint = reportedIsPlaying || inferredIsPlaying
-        val confirmByMovement = movedSincePending >= META_CONFIRM_MOVE_MS
-        val confirmByStability = stableFor >= META_STABLE_MS && canUsePlayingHint
-        val confirmByGiveUp = stableFor >= META_GIVE_UP_MS && canUsePlayingHint
-
-        if (confirmByMovement || confirmByStability || confirmByGiveUp) {
-            confirmedTrackKey = pendingTrackKey
-            confirmedTitle = pendingTitle
-            confirmedArtist = pendingArtist
-            confirmedDurationMs = pendingDurationMs
-
-            pendingTrackKey = ""
-            pendingSinceMs = 0L
-            pendingStartPosMs = 0L
-
-            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
-            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
-            return
-        }
-
-        lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
-        lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+    private fun fmtTime(ms: Long): String {
+        val totalSec = max(0L, ms) / 1000L
+        val m = totalSec / 60L
+        val s = (totalSec % 60L).toInt()
+        return "${m}:${s.toString().padStart(2, '0')}"
     }
-
-    // =========================
-    // The rest of your file stays the same (limits, OSC send, progress bars, etc.)
-    // =========================
 
     private fun joinWithLimits(lines: List<String>, maxChars: Int, maxLines: Int): String {
         if (lines.isEmpty()) return ""
@@ -1030,6 +1025,175 @@ class ChatboxViewModel(
         if (addToConversation) {
             conversationUiState.addMessage(Message(text, false, Instant.now()))
         }
+    }
+
+    // =========================
+    // Fix 1: infer playing from movement (BUT allow pause to show again)
+    // =========================
+    private fun updateInferredPlaying(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        positionMs: Long,
+        reportedIsPlaying: Boolean,
+        playbackSpeed: Float
+    ) {
+        val nowMs = System.currentTimeMillis()
+
+        val key = "${title.trim()}|${artist.trim()}|$durationMs"
+        val trackChanged = key != lastTrackKeyForInference && (title.isNotBlank() || artist.isNotBlank())
+
+        if (trackChanged) {
+            lastTrackKeyForInference = key
+            lastInferredPosMs = positionMs
+            lastInferredSampleTimeMs = nowMs
+            lastMovementAtMs = nowMs
+            pauseCandidateSinceMs = 0L
+            inferredIsPlaying = true
+            return
+        }
+
+        val dp = positionMs - lastInferredPosMs
+        lastInferredSampleTimeMs = nowMs
+        lastInferredPosMs = positionMs
+
+        val movedEnough = dp > 500L
+        if (movedEnough) {
+            inferredIsPlaying = true
+            lastMovementAtMs = nowMs
+            pauseCandidateSinceMs = 0L
+            return
+        }
+
+        // If system reports paused, start pause candidate timer.
+        if (!reportedIsPlaying || abs(playbackSpeed) < 0.01f) {
+            if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = nowMs
+        } else {
+            pauseCandidateSinceMs = 0L
+        }
+
+        // Soft hint: keep playing if system says playing
+        if (reportedIsPlaying) inferredIsPlaying = true
+    }
+
+    // =========================
+    // Fix 2: metadata stabilization (song name follows progress)
+    // =========================
+    private fun stabilizeNowPlayingMetadata(
+        rawTitle: String,
+        rawArtist: String,
+        rawDurationMs: Long,
+        positionMs: Long,
+        reportedIsPlaying: Boolean,
+        inferredIsPlaying: Boolean
+    ) {
+        val now = System.currentTimeMillis()
+
+        val t = rawTitle.trim()
+        val a = rawArtist.trim()
+        val hasMeta = t.isNotBlank() || a.isNotBlank()
+
+        if (!hasMeta) {
+            confirmedTrackKey = ""
+            confirmedTitle = ""
+            confirmedArtist = ""
+            confirmedDurationMs = 0L
+
+            pendingTrackKey = ""
+            pendingTitle = ""
+            pendingArtist = ""
+            pendingDurationMs = 0L
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = "(blank)"
+            lastNowPlayingArtist = "(blank)"
+            return
+        }
+
+        val rawKey = "${t}|${a}|$rawDurationMs"
+
+        // First ever
+        if (confirmedTrackKey.isBlank()) {
+            confirmedTrackKey = rawKey
+            confirmedTitle = t
+            confirmedArtist = a
+            confirmedDurationMs = rawDurationMs
+            lastNowPlayingTitle = if (t.isBlank()) "(blank)" else t
+            lastNowPlayingArtist = if (a.isBlank()) "(blank)" else a
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+            return
+        }
+
+        // If rawKey equals confirmed, show confirmed
+        if (rawKey == confirmedTrackKey && pendingTrackKey.isBlank()) {
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // ✅ FAST CONFIRM: If position reset OR duration changed, confirm immediately.
+        val posLooksLikeNewTrack = positionMs in 0..POS_RESET_CONFIRM_MS
+        val durationChanged = (rawDurationMs > 0L && confirmedDurationMs > 0L && rawDurationMs != confirmedDurationMs)
+
+        if (rawKey != confirmedTrackKey && (posLooksLikeNewTrack || durationChanged)) {
+            confirmedTrackKey = rawKey
+            confirmedTitle = t
+            confirmedArtist = a
+            confirmedDurationMs = rawDurationMs
+
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Start/replace pending candidate
+        if (pendingTrackKey.isBlank() || rawKey != pendingTrackKey) {
+            pendingTrackKey = rawKey
+            pendingTitle = t
+            pendingArtist = a
+            pendingDurationMs = rawDurationMs
+            pendingSinceMs = now
+            pendingStartPosMs = positionMs.coerceAtLeast(0L)
+
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Pending still same: confirm conditions
+        val stableFor = now - pendingSinceMs
+        val movedSincePending = (positionMs - pendingStartPosMs)
+
+        val canUsePlayingHint = reportedIsPlaying || inferredIsPlaying
+        val confirmByMovement = movedSincePending >= META_CONFIRM_MOVE_MS
+        val confirmByStability = stableFor >= META_STABLE_MS && canUsePlayingHint
+        val confirmByGiveUp = stableFor >= META_GIVE_UP_MS && canUsePlayingHint
+
+        if (confirmByMovement || confirmByStability || confirmByGiveUp) {
+            confirmedTrackKey = pendingTrackKey
+            confirmedTitle = pendingTitle
+            confirmedArtist = pendingArtist
+            confirmedDurationMs = pendingDurationMs
+
+            pendingTrackKey = ""
+            pendingSinceMs = 0L
+            pendingStartPosMs = 0L
+
+            lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+            lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
+            return
+        }
+
+        // Still pending: show confirmed
+        lastNowPlayingTitle = if (confirmedTitle.isBlank()) "(blank)" else confirmedTitle
+        lastNowPlayingArtist = if (confirmedArtist.isBlank()) "(blank)" else confirmedArtist
     }
 }
 
