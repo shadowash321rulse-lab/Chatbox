@@ -1,4 +1,4 @@
-package com.scrapw.chatbox.service
+package com.scrapw.chatbox.keepalive
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,95 +9,133 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import androidx.core.app.NotificationCompat
-import com.scrapw.chatbox.R
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
+/**
+ * Foreground service whose only job is to keep the app scheduled while the screen is off (Doze).
+ * Your existing ViewModel jobs keep sending OSC; this service prevents the process from being frozen.
+ */
 class ChatboxKeepAliveService : Service() {
 
     companion object {
-        private const val CHANNEL_ID = "chatbox_keep_alive"
-        private const val NOTIF_ID = 4242
+        private const val TAG = "ChatboxKeepAliveService"
+        private const val CHANNEL_ID = "chatbox_keepalive"
+        private const val NOTIF_ID = 1001
 
-        const val ACTION_START = "com.scrapw.chatbox.service.ACTION_START_KEEP_ALIVE"
-        const val ACTION_STOP = "com.scrapw.chatbox.service.ACTION_STOP_KEEP_ALIVE"
+        fun start(context: Context) {
+            val i = Intent(context, ChatboxKeepAliveService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(i)
+            } else {
+                context.startService(i)
+            }
+        }
+
+        fun stop(context: Context) {
+            context.stopService(Intent(context, ChatboxKeepAliveService::class.java))
+        }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var loopJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "onCreate")
+
+        startAsForeground()
+
+        // PARTIAL_WAKE_LOCK keeps CPU running while screen is off.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:chatbox_keepalive").apply {
+            setReferenceCounted(false)
+            try {
+                acquire()
+                Log.d(TAG, "WakeLock acquired")
+            } catch (t: Throwable) {
+                Log.e(TAG, "WakeLock acquire failed", t)
+            }
+        }
+
+        // Small periodic loop to keep the process “active” under some OEMs.
+        loopJob?.cancel()
+        loopJob = scope.launch {
+            while (true) {
+                delay(30_000L)
+                Log.d(TAG, "tick")
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopForeground(true)
-                stopSelf()
-                return START_NOT_STICKY
-            }
-            ACTION_START, null -> {
-                startAsForeground()
-                acquireWakeLock()
-                return START_STICKY
-            }
-            else -> return START_STICKY
-        }
-    }
-
-    private fun startAsForeground() {
-        createChannelIfNeeded()
-
-        val n: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Chatbox running")
-            .setContentText("Keeping OSC updates active while screen is off")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        startForeground(NOTIF_ID, n)
-    }
-
-    private fun createChannelIfNeeded() {
-        if (Build.VERSION.SDK_INT < 26) return
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val existing = nm.getNotificationChannel(CHANNEL_ID)
-        if (existing != null) return
-
-        val ch = NotificationChannel(
-            CHANNEL_ID,
-            "Chatbox Keep Alive",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "Keeps OSC sending active while the screen is off"
-            setShowBadge(false)
-            lockscreenVisibility = Notification.VISIBILITY_SECRET
-        }
-        nm.createNotificationChannel(ch)
-    }
-
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "Chatbox:KeepAlive"
-        ).apply {
-            setReferenceCounted(false)
-            acquire()
-        }
-    }
-
-    private fun releaseWakeLock() {
-        try {
-            wakeLock?.let { if (it.isHeld) it.release() }
-        } catch (_: Throwable) {
-        } finally {
-            wakeLock = null
-        }
+        // If killed, try to come back.
+        return START_STICKY
     }
 
     override fun onDestroy() {
-        releaseWakeLock()
         super.onDestroy()
+        Log.d(TAG, "onDestroy")
+
+        loopJob?.cancel()
+        loopJob = null
+
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Throwable) {
+        }
+        wakeLock = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startAsForeground() {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(
+                    CHANNEL_ID,
+                    "Chatbox Background",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Keeps Chatbox running while screen is off so OSC continues."
+                    setShowBadge(false)
+                }
+                nm.createNotificationChannel(ch)
+            }
+
+            val notif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle("Chatbox running")
+                    .setContentText("Keeping OSC updates alive while screen is off")
+                    .setSmallIcon(android.R.drawable.stat_notify_sync)
+                    .setOngoing(true)
+                    .build()
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+                    .setContentTitle("Chatbox running")
+                    .setContentText("Keeping OSC updates alive while screen is off")
+                    .setSmallIcon(android.R.drawable.stat_notify_sync)
+                    .setOngoing(true)
+                    .build()
+            }
+
+            startForeground(NOTIF_ID, notif)
+        } catch (se: SecurityException) {
+            // If POST_NOTIFICATIONS isn’t granted on Android 13+, some devices may throw.
+            // Service will still try to run, but foreground may fail; log it.
+            Log.e(TAG, "startForeground blocked (notification permission?)", se)
+        } catch (t: Throwable) {
+            Log.e(TAG, "startAsForeground failed", t)
+        }
+    }
 }
