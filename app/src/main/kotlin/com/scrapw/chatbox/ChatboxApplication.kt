@@ -13,13 +13,13 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
 )
 
 class ChatboxApplication : Application() {
-    lateinit var userPreferencesRepository: UserPreferencesRepository
 
     companion object {
-        @Volatile
         lateinit var instance: ChatboxApplication
             private set
     }
+
+    lateinit var userPreferencesRepository: UserPreferencesRepository
 
     override fun onCreate() {
         super.onCreate()
