@@ -9,11 +9,9 @@
     <!-- For ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Keep alive while screen is off -->
+    <!-- Keep running during screen off / doze -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Helps on Android 13+ so the foreground notification can show -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name="com.scrapw.chatbox.ChatboxApplication"
@@ -29,9 +27,9 @@
         <!-- Overlay -->
         <service android:name=".overlay.OverlayService" />
 
-        <!-- Keep-alive foreground service (NEW) -->
+        <!-- Keep-alive foreground service (prevents cycle from freezing in doze) -->
         <service
-            android:name=".service.ChatboxKeepAliveService"
+            android:name=".KeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
