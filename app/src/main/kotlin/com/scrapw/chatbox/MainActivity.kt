@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.scrapw.chatbox.keepalive.ChatboxKeepAliveService
 import com.scrapw.chatbox.overlay.OverlayDaemon
 import com.scrapw.chatbox.ui.theme.ChatboxTheme
 
@@ -29,15 +30,15 @@ class MainActivity : ComponentActivity() {
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        // Even if denied, we try to start anyway (some devices still allow FGS notif).
-        KeepAliveService.start(this)
+        // Even if denied, try to start anyway (some devices still allow FGS notif).
+        ChatboxKeepAliveService.start(applicationContext)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
-        // Start keep-alive so Now Playing keeps updating when screen turns off.
+        // Start keep-alive so OSC continues when screen turns off.
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -45,12 +46,12 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
 
             if (granted) {
-                KeepAliveService.start(this)
+                ChatboxKeepAliveService.start(applicationContext)
             } else {
                 notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         } else {
-            KeepAliveService.start(this)
+            ChatboxKeepAliveService.start(applicationContext)
         }
 
         setContent {
