@@ -20,7 +20,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.scrapw.chatbox.ChatboxApplication
-import com.scrapw.chatbox.KeepAliveService
 import com.scrapw.chatbox.NowPlayingState
 import com.scrapw.chatbox.data.UserPreferencesRepository
 import com.scrapw.chatbox.osc.ChatboxOSC
@@ -66,6 +65,12 @@ class ChatboxViewModel(
         // ✅ If position resets near the start, we treat it as a definite track switch
         private const val POS_RESET_CONFIRM_MS = 1_800L
 
+        // ✅ Pause detection (your request)
+        private const val NO_MOVE_PAUSE_MS = 5_000L
+
+        // ✅ Tick that updates pause detection even when notifications stop
+        private const val UI_TICK_MS = 500L
+
         @MainThread
         fun isInstanceInitialized(): Boolean = ::instance.isInitialized
 
@@ -86,8 +91,8 @@ class ChatboxViewModel(
     }
 
     override fun onCleared() {
+        uiTickJob?.cancel()
         stopAll(clearFromChatbox = false)
-        updateKeepAlive() // ✅ stop foreground service if nothing should run
         super.onCleared()
     }
 
@@ -278,10 +283,13 @@ class ChatboxViewModel(
     // ---- Playing inference (plus pause restore) ----
     private var inferredIsPlaying = false
     private var lastTrackKeyForInference: String = ""
-    private var lastInferredPosMs: Long = 0L
-    private var lastInferredSampleTimeMs: Long = 0L
     private var lastMovementAtMs: Long = 0L
     private var pauseCandidateSinceMs: Long = 0L
+
+    // ✅ NEW: tick-based movement tracking using EFFECTIVE position (not raw snapshot)
+    private var lastEffectivePosForTick: Long = 0L
+    private var lastEffectiveTickAtMs: Long = 0L
+    private var uiTickJob: Job? = null
 
     // ---- Metadata stabilizer (song name follows progress) ----
     private var confirmedTrackKey: String = ""
@@ -366,7 +374,6 @@ class ChatboxViewModel(
         viewModelScope.launch {
             userPreferencesRepository.cycleEnabled.collect {
                 cycleEnabled = it
-                updateKeepAlive() // ✅ background
                 rebuildCombinedPreviewOnly()
             }
         }
@@ -413,30 +420,46 @@ class ChatboxViewModel(
             userPreferencesRepository.cyclePresetsCollapsed.collect { cyclePresetsCollapsed = it }
         }
 
+        // ✅ NEW: tick loop to keep pause detection honest even when notifications stop
+        uiTickJob?.cancel()
+        uiTickJob = viewModelScope.launch {
+            while (true) {
+                tickNowPlayingMovement()
+                // recompute paused/playing for preview even with no new notifications
+                nowPlayingIsPlaying = computeDisplayedPlaying()
+                rebuildCombinedPreviewOnly()
+                delay(UI_TICK_MS)
+            }
+        }
+
         viewModelScope.launch {
             NowPlayingState.state.collect { s ->
                 listenerConnected = s.listenerConnected
                 activePackage = if (s.activePackage.isBlank()) "(none)" else s.activePackage
                 nowPlayingDetected = s.detected
 
-                // Always keep timing/progress updated (this is your bar + time)
+                // Always keep timing/progress updated (bar + time)
                 nowPlayingDurationMs = s.durationMs
                 nowPlayingPositionMs = s.positionMs
                 nowPlayingPositionUpdateTimeMs = s.positionUpdateTimeMs
                 nowPlayingSpeed = s.playbackSpeed
                 nowPlayingReportedIsPlaying = s.isPlaying
 
-                // 1) Update playing inference (but allow "Paused" again)
-                updateInferredPlaying(
-                    title = s.title,
-                    artist = s.artist,
-                    durationMs = s.durationMs,
-                    positionMs = s.positionMs,
-                    reportedIsPlaying = s.isPlaying,
-                    playbackSpeed = s.playbackSpeed
-                )
+                // Track switch resets movement timers so we don't false-pause on skip/back
+                val key = "${s.title.trim()}|${s.artist.trim()}|${s.durationMs}"
+                val trackChanged = key != lastTrackKeyForInference && (s.title.isNotBlank() || s.artist.isNotBlank())
+                if (trackChanged) {
+                    lastTrackKeyForInference = key
+                    lastMovementAtMs = System.currentTimeMillis()
+                    pauseCandidateSinceMs = 0L
+                    inferredIsPlaying = true
 
-                // 2) Stabilize metadata, BUT confirm immediately on position reset / duration jump
+                    // reset tick position reference too
+                    lastEffectivePosForTick = nowPlayingPositionMs.coerceAtLeast(0L)
+                    lastEffectiveTickAtMs = System.currentTimeMillis()
+                }
+
+                // Stabilize metadata (keeps title aligned with track/progress)
                 stabilizeNowPlayingMetadata(
                     rawTitle = s.title,
                     rawArtist = s.artist,
@@ -446,35 +469,79 @@ class ChatboxViewModel(
                     inferredIsPlaying = inferredIsPlaying
                 )
 
-                // Final displayed playing state:
-                // - If system says paused AND we've been in that state briefly, show paused.
-                // - Otherwise allow inference to keep it "playing" through skip/back glitches.
+                // Final displayed state:
                 nowPlayingIsPlaying = computeDisplayedPlaying()
-
                 rebuildCombinedPreviewOnly()
             }
         }
     }
 
-    // =========================
-    // Background keep-alive (ONLY ADDITION)
-    // =========================
-    private fun updateKeepAlive() {
-        // Runs a foreground service while any sender feature is enabled, so Doze doesn't freeze your cycle/osc.
-        val shouldRun = spotifyEnabled || cycleEnabled || afkEnabled
-        val ctx = try { ChatboxApplication.instance } catch (_: Throwable) { null }
-        if (ctx != null) {
-            if (shouldRun) KeepAliveService.start(ctx) else KeepAliveService.stop(ctx)
+    // ✅ Effective position right now (used for movement detection)
+    private fun effectivePosNowMs(): Long {
+        val snap = nowPlayingPositionMs.coerceAtLeast(0L)
+        val dur = nowPlayingDurationMs.coerceAtLeast(0L)
+        val elapsed = SystemClock.elapsedRealtime() - nowPlayingPositionUpdateTimeMs
+        val speed = nowPlayingSpeed
+        val adv = if (elapsed > 0L) (elapsed.toFloat() * speed).toLong() else 0L
+        val eff = snap + max(0L, adv)
+        return if (dur > 0L) eff.coerceAtMost(dur) else eff
+    }
+
+    // ✅ Tick updates lastMovementAtMs based on EFFECTIVE movement, so it never false-pauses
+    private fun tickNowPlayingMovement() {
+        if (!spotifyEnabled) return
+        if (!nowPlayingDetected && !spotifyDemoEnabled) return
+
+        val nowMs = System.currentTimeMillis()
+        val eff = effectivePosNowMs()
+
+        if (lastEffectiveTickAtMs == 0L) {
+            lastEffectiveTickAtMs = nowMs
+            lastEffectivePosForTick = eff
+            lastMovementAtMs = nowMs
+            return
+        }
+
+        val dp = eff - lastEffectivePosForTick
+        lastEffectivePosForTick = eff
+        lastEffectiveTickAtMs = nowMs
+
+        // Movement rules:
+        // - normal playing: dp should be positive over time
+        // - seeking: dp can jump big (positive or negative) — treat as movement
+        val moved =
+            dp >= 150L || abs(dp) >= 1_000L
+
+        if (moved) {
+            lastMovementAtMs = nowMs
+            pauseCandidateSinceMs = 0L
+            inferredIsPlaying = true
+            return
+        }
+
+        // If system says paused or speed ~ 0, arm pause candidate (but don't instantly believe it)
+        if (!nowPlayingReportedIsPlaying || abs(nowPlayingSpeed) < 0.01f) {
+            if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = nowMs
+        } else {
+            pauseCandidateSinceMs = 0L
         }
     }
 
     private fun computeDisplayedPlaying(): Boolean {
         val now = System.currentTimeMillis()
         val noMoveForMs = now - lastMovementAtMs
-        val hardPause = !nowPlayingReportedIsPlaying && pauseCandidateSinceMs > 0L && (now - pauseCandidateSinceMs) >= 1200L
+
+        // If explicitly paused for a bit, allow it to win
+        val hardPause =
+            !nowPlayingReportedIsPlaying &&
+                pauseCandidateSinceMs > 0L &&
+                (now - pauseCandidateSinceMs) >= 1_200L
+
         if (hardPause) return false
-        if (noMoveForMs >= 4_500L) return false
-        return inferredIsPlaying || nowPlayingReportedIsPlaying
+        if (noMoveForMs >= NO_MOVE_PAUSE_MS) return false
+
+        // otherwise it's playing
+        return true
     }
 
     // =========================
@@ -504,7 +571,6 @@ class ChatboxViewModel(
     fun killStopAndClear(local: Boolean = false) {
         stopAll(clearFromChatbox = false)
         clearChatbox(local)
-        updateKeepAlive() // ✅ background
         rebuildCombinedPreviewOnly(forceClearIfAllOff = true)
     }
 
@@ -513,7 +579,6 @@ class ChatboxViewModel(
     // =========================
     fun setAfkEnabledFlag(enabled: Boolean) {
         afkEnabled = enabled
-        updateKeepAlive() // ✅ background
         rebuildCombinedPreviewOnly()
         if (!enabled) stopAfkSender(clearFromChatbox = true)
     }
@@ -521,14 +586,12 @@ class ChatboxViewModel(
     fun setCycleEnabledFlag(enabled: Boolean) {
         cycleEnabled = enabled
         viewModelScope.launch { userPreferencesRepository.saveCycleEnabled(enabled) }
-        updateKeepAlive() // ✅ background
         rebuildCombinedPreviewOnly()
         if (!enabled) stopCycle(clearFromChatbox = true)
     }
 
     fun setSpotifyEnabledFlag(enabled: Boolean) {
         spotifyEnabled = enabled
-        updateKeepAlive() // ✅ background
         rebuildCombinedPreviewOnly()
         if (!enabled) stopNowPlayingSender(clearFromChatbox = true)
     }
@@ -775,7 +838,6 @@ class ChatboxViewModel(
         stopNowPlayingSender(clearFromChatbox = false)
         stopAfkSender(clearFromChatbox = false)
         if (clearFromChatbox) clearChatbox()
-        updateKeepAlive() // ✅ background
     }
 
     // =========================
@@ -901,7 +963,7 @@ class ChatboxViewModel(
         val p = min(1f, max(0f, posMs.toFloat() / duration.toFloat()))
 
         return when (preset.coerceIn(1, 5)) {
-            1 -> { // Love (10 chars total)
+            1 -> {
                 val innerSlots = 8
                 val idx = (p * (innerSlots - 1)).toInt()
                 val inner = CharArray(innerSlots) { '━' }
@@ -909,7 +971,7 @@ class ChatboxViewModel(
                 "♡" + inner.concatToString() + "♡"
             }
 
-            2 -> { // Minimal (10 chars)
+            2 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '─' }
@@ -917,7 +979,7 @@ class ChatboxViewModel(
                 bg.concatToString()
             }
 
-            3 -> { // Crystal (10 chars) ✅ keep ⟡
+            3 -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val bg = CharArray(slots) { '⟡' }
@@ -927,7 +989,7 @@ class ChatboxViewModel(
 
             4 -> renderSoundwaveBar(p, posMs, isPlaying)
 
-            else -> { // Geometry (10 chars)
+            else -> {
                 val slots = 10
                 val idx = (p * (slots - 1)).toInt()
                 val out = CharArray(slots) { i ->
@@ -1039,59 +1101,6 @@ class ChatboxViewModel(
         if (addToConversation) {
             conversationUiState.addMessage(Message(text, false, Instant.now()))
         }
-    }
-
-    // =========================
-    // Fix 1: infer playing from movement (BUT allow pause to show again)
-    // =========================
-    private fun updateInferredPlaying(
-        title: String,
-        artist: String,
-        durationMs: Long,
-        positionMs: Long,
-        reportedIsPlaying: Boolean,
-        playbackSpeed: Float
-    ) {
-        val nowMs = System.currentTimeMillis()
-
-        val key = "${title.trim()}|${artist.trim()}|$durationMs"
-        val trackChanged = key != lastTrackKeyForInference && (title.isNotBlank() || artist.isNotBlank())
-
-        if (trackChanged) {
-            lastTrackKeyForInference = key
-            lastInferredPosMs = positionMs
-            lastInferredSampleTimeMs = nowMs
-            lastMovementAtMs = nowMs
-            pauseCandidateSinceMs = 0L
-            inferredIsPlaying = true
-            return
-        }
-
-        val dp = positionMs - lastInferredPosMs
-        lastInferredSampleTimeMs = nowMs
-        lastInferredPosMs = positionMs
-
-        val movedEnough = dp > 500L
-        if (movedEnough) {
-            inferredIsPlaying = true
-            lastMovementAtMs = nowMs
-            pauseCandidateSinceMs = 0L
-            return
-        }
-
-        if (!reportedIsPlaying || abs(playbackSpeed) < 0.01f) {
-            if (pauseCandidateSinceMs == 0L) pauseCandidateSinceMs = nowMs
-        } else {
-            pauseCandidateSinceMs = 0L
-        }
-
-        val noMoveForMs = nowMs - lastMovementAtMs
-        if (noMoveForMs >= 4_500L) {
-            inferredIsPlaying = false
-            return
-        }
-
-        if (reportedIsPlaying) inferredIsPlaying = true
     }
 
     // =========================
