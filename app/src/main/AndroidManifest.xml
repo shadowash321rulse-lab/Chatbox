@@ -15,6 +15,9 @@
     <!-- Foreground service type permission (Android 14+ friendly) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- Optional but recommended on Android 13+ (notification for foreground service) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name="com.scrapw.chatbox.ChatboxApplication"
         android:allowBackup="true"
@@ -29,6 +32,13 @@
         <!-- Overlay -->
         <service
             android:name=".overlay.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            tools:targetApi="29" />
+
+        <!-- ✅ Keep-alive Foreground Service (prevents Doze from killing OSC updates) -->
+        <service
+            android:name=".keepalive.ChatboxKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             tools:targetApi="29" />
