@@ -1,3 +1,4 @@
+// app/src/main/kotlin/com/scrapw/chatbox/overlay/OverlayService.kt
 package com.scrapw.chatbox.overlay
 
 import android.annotation.SuppressLint
@@ -11,6 +12,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -28,7 +30,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -46,13 +47,9 @@ import kotlin.math.roundToInt
 class OverlayService : Service() {
 
     companion object {
-        private const val TAG = "OverlayService"
-
-        private const val CHANNEL_ID = "vrca_overlay_fg"
-        private const val CHANNEL_NAME = "VRC-A Background"
-        private const val NOTIF_ID = 31001
-
-        const val ACTION_STOP = "com.scrapw.chatbox.overlay.STOP"
+        private const val NOTIF_CHANNEL_ID = "chatbox_overlay_foreground"
+        private const val NOTIF_CHANNEL_NAME = "Chatbox Overlay"
+        private const val NOTIF_ID = 1001
     }
 
     private lateinit var buttonComposeView: ComposeView
@@ -63,7 +60,12 @@ class OverlayService : Service() {
     private val buttonDefaultPos = Offset(1f, 0.7f)
     private val msgDefaultPos = Offset(0f, 0.1f)
 
-    enum class Window { NONE, BUTTON, MESSENGER }
+    enum class Window {
+        NONE,
+        BUTTON,
+        MESSENGER
+    }
+
     private var currentWindow = Window.NONE
 
     private val windowManager get() = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -88,25 +90,16 @@ class OverlayService : Service() {
         flags = flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
     }
 
-    // Orientation + stored positions
-    var orientation = mutableStateOf(Configuration.ORIENTATION_PORTRAIT)
-
-    private fun isPortrait(): Boolean = orientation.value != Configuration.ORIENTATION_LANDSCAPE
-
-    private var buttonPortraitPos: Offset? = null
-    private var buttonLandscapePos: Offset? = null
-
-    private var msgPortraitPos: Offset? = null
-    private var msgLandscapePos: Offset? = null
-
-    private var overlayOffset: Offset by mutableStateOf(Offset.Zero)
+    // ---- Foreground + WakeLock ----
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "onCreate()")
+        Log.d("Service", "onCreate()")
 
-        // ✅ CRITICAL: foreground immediately so Android won’t freeze/kill us on screen-off
-        ensureForeground()
+        // ✅ Keep service alive while screen off:
+        startAsForeground()
+        acquireWakeLock()
 
         buttonComposeView = ComposeView(this)
         msgComposeView = ComposeView(this)
@@ -115,91 +108,96 @@ class OverlayService : Service() {
 
         onOrientationChange()
         initOverlay()
+
         switchOverlay(Window.BUTTON)
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopSelf()
-                return START_NOT_STICKY
-            }
-        }
-
-        // Keep notification present if system restarts us
-        ensureForeground()
-
-        // ✅ This tells Android to restart service if killed
-        return START_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "onDestroy()")
+        Log.d("Service", "onDestroy()")
 
         try {
-            when (currentWindow) {
-                Window.BUTTON -> windowManager.removeViewImmediate(buttonComposeView)
-                Window.MESSENGER -> windowManager.removeViewImmediate(msgComposeView)
-                Window.NONE -> {}
+            if (currentWindow == Window.BUTTON) {
+                windowManager.removeViewImmediate(buttonComposeView)
+            } else if (currentWindow == Window.MESSENGER) {
+                windowManager.removeViewImmediate(msgComposeView)
             }
         } catch (_: Throwable) {
         }
 
+        releaseWakeLock()
+
         lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-        currentWindow = Window.NONE
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
-    override fun onBind(intent: Intent): IBinder? = null
+    private fun startAsForeground() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
-    // =========================
-    // Foreground service
-    // =========================
-    private fun ensureForeground() {
-        try {
-            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val existing = nm.getNotificationChannel(CHANNEL_ID)
-                if (existing == null) {
-                    val ch = NotificationChannel(
-                        CHANNEL_ID,
-                        CHANNEL_NAME,
-                        NotificationManager.IMPORTANCE_LOW
-                    ).apply {
-                        description = "Keeps VRC-A running so Now Playing works with screen off."
-                        setShowBadge(false)
-                        lockscreenVisibility = Notification.VISIBILITY_SECRET
-                    }
-                    nm.createNotificationChannel(ch)
+        if (Build.VERSION.SDK_INT >= 26) {
+            val existing = nm.getNotificationChannel(NOTIF_CHANNEL_ID)
+            if (existing == null) {
+                val channel = NotificationChannel(
+                    NOTIF_CHANNEL_ID,
+                    NOTIF_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_MIN
+                ).apply {
+                    description = "Keeps Chatbox overlay running while screen is off"
+                    setShowBadge(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
+                nm.createNotificationChannel(channel)
             }
+        }
 
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher) // uses your existing launcher icon
-                .setContentTitle("VRC-A running")
-                .setContentText("Keeping Now Playing active in the background.")
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build()
+        val builder =
+            if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, NOTIF_CHANNEL_ID)
+            else Notification.Builder(this)
 
-            startForeground(NOTIF_ID, notification)
+        val notif = builder
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Chatbox running")
+            .setContentText("Keeping OSC updates alive while screen is off")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .build()
+
+        // On Android 14+ this helps avoid stricter background limits
+        startForeground(NOTIF_ID, notif)
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Chatbox:OverlayService")
+            wl.setReferenceCounted(false)
+            wl.acquire()
+            wakeLock = wl
         } catch (t: Throwable) {
-            // If something goes wrong, don’t crash the app — but logs help.
-            Log.e(TAG, "Failed to start foreground", t)
+            Log.w("Service", "WakeLock acquire failed: ${t.message}")
         }
     }
 
-    // =========================
-    // Overlay UI
-    // =========================
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let { wl ->
+                if (wl.isHeld) wl.release()
+            }
+        } catch (_: Throwable) {
+        } finally {
+            wakeLock = null
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun initOverlay() {
         buttonComposeView.setContent {
             OverlayTheme {
                 OverlayDraggableContainer {
-                    ButtonOverlay { switchOverlay(Window.MESSENGER) }
+                    ButtonOverlay {
+                        switchOverlay(Window.MESSENGER)
+                    }
                 }
 
                 val configuration = LocalConfiguration.current
@@ -238,7 +236,6 @@ class OverlayService : Service() {
             true
         }
 
-        // Trick the ComposeView into thinking we track lifecycle
         val viewModelStoreOwner = object : ViewModelStoreOwner {
             override val viewModelStore: ViewModelStore
                 get() = ViewModelStore()
@@ -260,28 +257,22 @@ class OverlayService : Service() {
     }
 
     private fun switchOverlay(destinationWindow: Window) {
-        try {
-            when (currentWindow) {
-                Window.BUTTON -> windowManager.removeView(buttonComposeView)
-                Window.MESSENGER -> windowManager.removeView(msgComposeView)
-                Window.NONE -> {}
-            }
-        } catch (_: Throwable) {
+        when (currentWindow) {
+            Window.BUTTON -> windowManager.removeView(buttonComposeView)
+            Window.MESSENGER -> windowManager.removeView(msgComposeView)
+            Window.NONE -> {}
         }
 
-        try {
-            when (destinationWindow) {
-                Window.BUTTON -> {
-                    buttonComposeView.removeAllViews()
-                    windowManager.addView(buttonComposeView, buttonWindowParams)
-                }
-                Window.MESSENGER -> {
-                    msgComposeView.removeAllViews()
-                    windowManager.addView(msgComposeView, msgWindowParams)
-                }
-                Window.NONE -> {}
+        when (destinationWindow) {
+            Window.BUTTON -> {
+                buttonComposeView.removeAllViews()
+                windowManager.addView(buttonComposeView, buttonWindowParams)
             }
-        } catch (_: Throwable) {
+            Window.MESSENGER -> {
+                msgComposeView.removeAllViews()
+                windowManager.addView(msgComposeView, msgWindowParams)
+            }
+            Window.NONE -> {}
         }
 
         currentWindow = destinationWindow
@@ -289,71 +280,95 @@ class OverlayService : Service() {
 
     private fun update() {
         try {
-            when (currentWindow) {
-                Window.BUTTON -> windowManager.updateViewLayout(buttonComposeView, buttonWindowParams)
-                Window.MESSENGER -> windowManager.updateViewLayout(msgComposeView, msgWindowParams)
-                Window.NONE -> {}
+            if (currentWindow == Window.BUTTON) {
+                windowManager.updateViewLayout(buttonComposeView, buttonWindowParams)
+            } else if (currentWindow == Window.MESSENGER) {
+                windowManager.updateViewLayout(msgComposeView, msgWindowParams)
             }
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
         }
     }
 
+    var orientation = mutableStateOf(Configuration.ORIENTATION_PORTRAIT)
+
+    private fun isPortrait(): Boolean {
+        return orientation.value != Configuration.ORIENTATION_LANDSCAPE
+    }
+
+    private var buttonPortraitPos: Offset? = null
+    private var buttonLandscapePos: Offset? = null
+
+    private var msgPortraitPos: Offset? = null
+    private var msgLandscapePos: Offset? = null
+
     private fun onOrientationChange() {
+        val f = Rect().also { buttonComposeView.getWindowVisibleDisplayFrame(it) }
+
+        Log.d("isPortrait()", isPortrait().toString())
+        Log.d("width()", f.width().toString())
+        Log.d("height()", f.height().toString())
+
         if (isPortrait()) {
             if (buttonPortraitPos == null) {
-                val f = Rect().also { buttonComposeView.getWindowVisibleDisplayFrame(it) }
+                val fr = Rect().also { buttonComposeView.getWindowVisibleDisplayFrame(it) }
                 buttonPortraitPos = Offset(
-                    x = f.width() * buttonDefaultPos.x,
-                    y = f.height() * buttonDefaultPos.y,
+                    x = fr.width() * buttonDefaultPos.x,
+                    y = fr.height() * buttonDefaultPos.y,
                 )
             }
+
             buttonWindowParams.apply {
                 x = buttonPortraitPos!!.x.toInt()
                 y = buttonPortraitPos!!.y.toInt()
             }
+
             overlayOffset = buttonPortraitPos as Offset
 
             if (msgPortraitPos == null) {
-                val f = Rect().also { msgComposeView.getWindowVisibleDisplayFrame(it) }
+                val fr = Rect().also { msgComposeView.getWindowVisibleDisplayFrame(it) }
                 msgPortraitPos = Offset(
-                    x = f.width() * msgDefaultPos.x,
-                    y = f.height() * msgDefaultPos.y,
+                    x = fr.width() * msgDefaultPos.x,
+                    y = fr.height() * msgDefaultPos.y,
                 )
             }
+
             msgWindowParams.apply {
                 x = msgPortraitPos!!.x.toInt()
                 y = msgPortraitPos!!.y.toInt()
             }
-
         } else {
             if (buttonLandscapePos == null) {
-                val f = Rect().also { buttonComposeView.getWindowVisibleDisplayFrame(it) }
+                val fr = Rect().also { buttonComposeView.getWindowVisibleDisplayFrame(it) }
                 buttonLandscapePos = Offset(
-                    x = f.width() * buttonDefaultPos.x,
-                    y = f.height() * buttonDefaultPos.y,
+                    x = fr.width() * buttonDefaultPos.x,
+                    y = fr.height() * buttonDefaultPos.y,
                 )
             }
+
             buttonWindowParams.apply {
                 x = buttonLandscapePos!!.x.toInt()
                 y = buttonLandscapePos!!.y.toInt()
             }
+
             overlayOffset = buttonLandscapePos as Offset
 
             if (msgLandscapePos == null) {
-                val f = Rect().also { msgComposeView.getWindowVisibleDisplayFrame(it) }
+                val fr = Rect().also { msgComposeView.getWindowVisibleDisplayFrame(it) }
                 msgLandscapePos = Offset(
-                    x = f.width() * msgDefaultPos.x,
-                    y = f.height() * msgDefaultPos.y,
+                    x = fr.width() * msgDefaultPos.x,
+                    y = fr.height() * msgDefaultPos.y,
                 )
             }
+
             msgWindowParams.apply {
                 x = msgLandscapePos!!.x.toInt()
                 y = msgLandscapePos!!.y.toInt()
             }
         }
-
         update()
     }
+
+    private var overlayOffset: Offset by mutableStateOf(Offset.Zero)
 
     @Composable
     fun OverlayDraggableContainer(
@@ -384,14 +399,17 @@ class OverlayService : Service() {
                     y = overlayOffset.y.roundToInt()
                 }
 
-                if (isPortrait()) buttonPortraitPos = overlayOffset else buttonLandscapePos = overlayOffset
-
-                try {
-                    windowManager.updateViewLayout(buttonComposeView, buttonWindowParams)
-                } catch (_: Throwable) {
+                if (isPortrait()) {
+                    buttonPortraitPos = overlayOffset
+                } else {
+                    buttonLandscapePos = overlayOffset
                 }
+
+                windowManager.updateViewLayout(buttonComposeView, buttonWindowParams)
             }
         },
         content = content
     )
+
+    override fun onBind(intent: Intent): IBinder? = null
 }
