@@ -158,6 +158,15 @@ function tokenizeFields(...fields) {
   const set = new Set();
   for (const f of fields) {
     if (!f) continue;
+    // Emit BOTH the RAW-lowercased tokens (fancy codepoints as-is, e.g. "ᵂᴴᴵᵀᴱ") AND the NFKC+smallcaps
+    // FOLDED tokens ("white") as ONE set. Emitting both from a SINGLE tokenizer call is what keeps them
+    // CONSISTENT: buildIndexOp derives add/rem from tokensOf(old) vs tokensOf(new), so every rename /
+    // re-key / remove now touches an entry's raw AND folded tokens TOGETHER. Previously tokenizeFields
+    // folded-only while the reconcile had also left the original raw tokens in the buckets as a SEPARATE
+    // set — so a rem computed from the folded view stripped "white"/"tiger" while orphaning the raw
+    // "ᵂᴴᴵᵀᴱ"/"ᵀᴵᴳᴱᴿ" (the "searchable in fancy font but not plain text" desync). The client union query
+    // (raw ∪ folded query tokens) matches either form, so both search modes work off this union index.
+    for (const w of String(f).toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (w.length >= 2) set.add(w);
     for (const w of foldFancy(f).toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (w.length >= 2) set.add(w);
   }
   return set;
@@ -193,7 +202,15 @@ const MAX_INDEX_OPS_PER_FLUSH = 150;
 // with the grouped index work (≤150 ops), prune (40 reads), reconcile (8) and rename (8) in the same
 // cron chain the worst case is ~700 subrequests, still comfortably under the ~1000/invocation budget.
 // Admin/bot pushes are separately bounded (WALK_BATCH).
-const MAX_SHARDS_PER_FLUSH = 180;
+// LOWERED 180 -> 60: at 180 the flush was measured taking >60s (GET /flush timed out) under a heavy
+// harvest backlog — each dirty shard is a PUT + a CDN purge (~100-300ms HTTP call), so 180 dirty shards
+// alone is tens of seconds of WALL time (the ~1000 subrequest COUNT budget was fine; wall time was not).
+// A flush that overruns the invocation is KILLED before the cron's later tasks run, so reconcileIndex
+// (the fold re-index) NEVER executed and the iq: queue never drained — the whole pipeline jammed behind
+// one overloaded flush. 60 shards keeps each flush well within budget so it COMPLETES and the downstream
+// reconcile/drain actually run. Contribution intake is slower, which is fine (and desirable) while the
+// passive-harvest inflow is the thing overloading the pipeline.
+const MAX_SHARDS_PER_FLUSH = 60;
 // Coalesce _manifest.json writes. The LIVE entry count already rides `meta.entries` (which /health
 // max()es against the manifest), so the _manifest.json copy only needs periodic freshening, not a
 // write+purge on every count-moving flush during steady growth. Rewrite it at most every N ms OR once
@@ -574,6 +591,7 @@ export default {
           entries: liveEntries,
           pendingBatches: meta.pendingBatches || 0,
           reports: meta.reports || 0,
+          iqDepth: meta.iqDepth || 0,   // search-index op queue depth (keys, ~150 ops each); drains to 0 as fold/rebuild ops apply
           lastFlush: meta.lastFlush || null,
           lastAdded: meta.lastAdded || 0,
           lastRemoved: meta.lastRemoved || 0,
@@ -617,7 +635,7 @@ export default {
           shardScheme: "filehex3-full",
           shardCount: 4096,
           foldVer: meta.foldVer || 0,   // fancy-Unicode fold re-index version (FOLD_VER when the one-time lap is done)
-          version: 18,   // small-caps added to the Unicode fold (index + query), FOLD_VER 2 re-index
+          version: 22,   // drain applies NEW contribution ops before the backlog (prompt new-avatar search)
         });
       }
 
@@ -645,13 +663,16 @@ export default {
     // re-indexes any entry MISSING from the search index (fragments/avtr/index), healing avatars
     // that were cloneable-but-unsearchable because their index op was dropped in the past. No GitHub.
     // Each task is independent + isolated: one throwing (e.g. a recount KV hiccup) must NOT skip the
-    // others (the worklist prune was intermittently skipped when it ran AFTER a slow/erroring recount).
-    // flushR2 first (drains queues + maintains fillHint), then the cheap prune, then the heavier recount.
+    // others. ORDER MATTERS FOR STARVATION: the CHEAP, critical tasks run FIRST so an overloaded flush
+    // (measured >60s under a harvest backlog) can't consume the whole invocation and skip them — which
+    // is exactly why the fold re-index (reconcileIndex) stopped running and the iq: queue jammed. So:
+    // reconcile (re-arm + advance the fold lap, enqueues iq: ops) → prune → author-rename, THEN flushR2
+    // LAST (now bounded to 60 shards so it completes and drains the iq: ops the earlier tasks queued).
     ctx.waitUntil((async () => {
-      try { await flushR2(env); } catch (e) { console.log("flushR2 err", e); }
-      try { await pruneFillWorklist(env); } catch (e) { console.log("prune err", e); }
       try { await reconcileIndex(env); } catch (e) { console.log("reconcile err", e); }
+      try { await pruneFillWorklist(env); } catch (e) { console.log("prune err", e); }
       try { await propagateAuthorRenames(env); } catch (e) { console.log("arn err", e); }
+      try { await flushR2(env); } catch (e) { console.log("flushR2 err", e); }
     })());
   },
 };
@@ -667,8 +688,15 @@ export default {
 // no reason to keep reading R2 forever. Re-run it any time with GET /admin/reconcile?key=… (resets the
 // cursor) if a future audit ever suspects drift. Bounded per run: RECONCILE_SHARDS_PER_RUN shard reads
 // + one avtr/ read per distinct id-bucket seen (cached within the run).
-const RECONCILE_SHARDS_PER_RUN = 8;   // one-time pass → go a bit faster (~8.5h) then STOP; stays under
-                                      // the subrequest budget alongside flushR2
+const RECONCILE_SHARDS_PER_RUN = 24;  // one-time pass → ~5h for a full lap then STOP. Bumped 8→24 to
+                                      // roll the fancy-Unicode fold re-index out ~3x faster (plain-text
+                                      // search for fancy-named/authored avatars needs the folded tokens
+                                      // in the index). COST-NEUTRAL vs the bill emergency: this only adds
+                                      // Class B shard READS per run; it does NOT touch MAX_INDEX_OPS_PER_FLUSH
+                                      // (the write-rate cap), and the flush drain (75 ops/min) still has
+                                      // spare capacity over the raised emission (~97/min), so the TTL-free
+                                      // iq: queue absorbs any transient backlog. Stays far under the
+                                      // subrequest budget alongside flushR2 (~40 extra reads/run).
 const RC_MAX_ATTEMPTS = 3;            // retry a tainted (read-failed) count pass this many times, then
                                       // give up and keep the incremental count (never adopt a bad one)
 // PERIODIC RE-ARM: the incremental `unfilled`/`entries` counts DRIFT over time (a fill that doesn't
@@ -694,7 +722,9 @@ const STALE_CUTOFF_MS = 30 * 24 * 60 * 60 * 1000;
 // behind this, the reconcile lap emits an ADD index op for every needsFold() entry so its NFKC-FOLDED
 // (plain-ASCII) tokens enter the search index (the old fancy-glyph tokens stay as harmless orphans).
 // After that lap, plain-text search finds fancy-named/authored avatars. Set on clean lap completion.
-const FOLD_VER = 2;   // bumped: added small-caps to the fold map -> re-index folds smallcaps entries too
+const FOLD_VER = 3;   // bumped: tokenizeFields now emits raw ∪ folded -> re-index rebuilds every fancy entry
+                      // under BOTH forms as one consistent set (fixes folded tokens getting stripped while
+                      // the raw fancy tokens were orphaned -> "searchable in fancy font but not plain text")
 async function reconcileIndex(env) {
   const meta = JSON.parse((await env.AVATAR_KV.get("meta")) || "{}");
   // ONE-TIME migration: zero the frozen legacy staleCount NOW (kills the phantom "queued" immediately)
@@ -1044,6 +1074,11 @@ async function listPrefix(env, prefix, cap = 5000) {
 
 async function flushR2(env) {
   const prevMeta = JSON.parse((await env.AVATAR_KV.get("meta")) || "{}");
+  // iq: index-op queue depth (in KEYS, each ≈ up to MAX_INDEX_OPS_PER_FLUSH ops), stamped from the
+  // drain below so /health can surface it WITHOUT its own list op (that endpoint is polled every 15s
+  // and must stay list-free). Carried forward on a failed flush (drain skipped). Saturates at the
+  // listPrefix cap (1000 keys); at ~150 ops/key that's ~150k queued ops before it stops being exact.
+  let iqDepthNow = prevMeta.iqDepth || 0;
   const pendNames = await listPrefix(env, "pend:");
   const repNames  = await listPrefix(env, "rep:");
   const admuNames = await listPrefix(env, "admu:");
@@ -1273,13 +1308,18 @@ async function flushR2(env) {
   // index exactly what persisted; a failed apply re-queues everything and re-applies idempotently).
   if (allShardsOk) {
     const iqNames = await listPrefix(env, "iq:", 1000);   // own cursor (never crowded out); we drain only a few
+    iqDepthNow = iqNames.length;   // queue depth at flush start (keys) → meta.iqDepth for /health, ticks to 0
     let queued = []; const drained = [];
     for (const kn of iqNames) {
-      if (queued.length >= MAX_INDEX_OPS_PER_FLUSH) break;
+      // Reserve this flush's own NEW contribution ops (indexOps) budget first, then read only enough
+      // BACKLOG keys to fill the rest. This is what makes a freshly-added avatar searchable within a
+      // flush or two instead of queuing behind a large backlog (a fold re-lap can leave hundreds of
+      // iq: keys). Old ops still drain with the remaining budget, so the backlog keeps clearing too.
+      if (indexOps.length + queued.length >= MAX_INDEX_OPS_PER_FLUSH) break;
       const val = await env.AVATAR_KV.get(kn); drained.push(kn);
       if (val) try { const a = JSON.parse(val); if (Array.isArray(a)) queued.push(...a); } catch (_) {}
     }
-    const all = [...queued, ...indexOps];
+    const all = [...indexOps, ...queued];   // NEW contributions FIRST, then backlog
     const toApply = all.slice(0, MAX_INDEX_OPS_PER_FLUSH);
     let applied = true;
     if (toApply.length) {
@@ -1393,6 +1433,7 @@ async function flushR2(env) {
       : `R2 partial: some shard IO failed, kept pending (+${added} -${removed})`,
     pendingBatches: pendNames.length,
     reports: allShardsOk ? Math.max(0, repNames.length - repClear.length) : repNames.length,
+    iqDepth: iqDepthNow,   // search-index op queue depth (keys) — watch it drain to 0 after a fold/rebuild
     backend: "r2",
   }));
 
