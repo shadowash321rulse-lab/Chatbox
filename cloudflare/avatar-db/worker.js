@@ -635,7 +635,7 @@ export default {
           shardScheme: "filehex3-full",
           shardCount: 4096,
           foldVer: meta.foldVer || 0,   // fancy-Unicode fold re-index version (FOLD_VER when the one-time lap is done)
-          version: 21,   // flush overrun fix: MAX_SHARDS_PER_FLUSH 180->60 + reconcile runs before flush
+          version: 22,   // drain applies NEW contribution ops before the backlog (prompt new-avatar search)
         });
       }
 
@@ -1311,11 +1311,15 @@ async function flushR2(env) {
     iqDepthNow = iqNames.length;   // queue depth at flush start (keys) → meta.iqDepth for /health, ticks to 0
     let queued = []; const drained = [];
     for (const kn of iqNames) {
-      if (queued.length >= MAX_INDEX_OPS_PER_FLUSH) break;
+      // Reserve this flush's own NEW contribution ops (indexOps) budget first, then read only enough
+      // BACKLOG keys to fill the rest. This is what makes a freshly-added avatar searchable within a
+      // flush or two instead of queuing behind a large backlog (a fold re-lap can leave hundreds of
+      // iq: keys). Old ops still drain with the remaining budget, so the backlog keeps clearing too.
+      if (indexOps.length + queued.length >= MAX_INDEX_OPS_PER_FLUSH) break;
       const val = await env.AVATAR_KV.get(kn); drained.push(kn);
       if (val) try { const a = JSON.parse(val); if (Array.isArray(a)) queued.push(...a); } catch (_) {}
     }
-    const all = [...queued, ...indexOps];
+    const all = [...indexOps, ...queued];   // NEW contributions FIRST, then backlog
     const toApply = all.slice(0, MAX_INDEX_OPS_PER_FLUSH);
     let applied = true;
     if (toApply.length) {
