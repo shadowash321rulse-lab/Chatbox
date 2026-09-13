@@ -158,6 +158,15 @@ function tokenizeFields(...fields) {
   const set = new Set();
   for (const f of fields) {
     if (!f) continue;
+    // Emit BOTH the RAW-lowercased tokens (fancy codepoints as-is, e.g. "ᵂᴴᴵᵀᴱ") AND the NFKC+smallcaps
+    // FOLDED tokens ("white") as ONE set. Emitting both from a SINGLE tokenizer call is what keeps them
+    // CONSISTENT: buildIndexOp derives add/rem from tokensOf(old) vs tokensOf(new), so every rename /
+    // re-key / remove now touches an entry's raw AND folded tokens TOGETHER. Previously tokenizeFields
+    // folded-only while the reconcile had also left the original raw tokens in the buckets as a SEPARATE
+    // set — so a rem computed from the folded view stripped "white"/"tiger" while orphaning the raw
+    // "ᵂᴴᴵᵀᴱ"/"ᵀᴵᴳᴱᴿ" (the "searchable in fancy font but not plain text" desync). The client union query
+    // (raw ∪ folded query tokens) matches either form, so both search modes work off this union index.
+    for (const w of String(f).toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (w.length >= 2) set.add(w);
     for (const w of foldFancy(f).toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (w.length >= 2) set.add(w);
   }
   return set;
@@ -618,7 +627,7 @@ export default {
           shardScheme: "filehex3-full",
           shardCount: 4096,
           foldVer: meta.foldVer || 0,   // fancy-Unicode fold re-index version (FOLD_VER when the one-time lap is done)
-          version: 19,   // + iqDepth (index-op queue depth) on /health, stamped from the flush drain (no extra list op)
+          version: 20,   // tokenizeFields emits raw ∪ folded (consistent token set); FOLD_VER 3 re-index
         });
       }
 
@@ -702,7 +711,9 @@ const STALE_CUTOFF_MS = 30 * 24 * 60 * 60 * 1000;
 // behind this, the reconcile lap emits an ADD index op for every needsFold() entry so its NFKC-FOLDED
 // (plain-ASCII) tokens enter the search index (the old fancy-glyph tokens stay as harmless orphans).
 // After that lap, plain-text search finds fancy-named/authored avatars. Set on clean lap completion.
-const FOLD_VER = 2;   // bumped: added small-caps to the fold map -> re-index folds smallcaps entries too
+const FOLD_VER = 3;   // bumped: tokenizeFields now emits raw ∪ folded -> re-index rebuilds every fancy entry
+                      // under BOTH forms as one consistent set (fixes folded tokens getting stripped while
+                      // the raw fancy tokens were orphaned -> "searchable in fancy font but not plain text")
 async function reconcileIndex(env) {
   const meta = JSON.parse((await env.AVATAR_KV.get("meta")) || "{}");
   // ONE-TIME migration: zero the frozen legacy staleCount NOW (kills the phantom "queued" immediately)
