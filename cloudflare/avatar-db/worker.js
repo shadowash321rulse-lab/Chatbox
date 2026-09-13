@@ -574,6 +574,7 @@ export default {
           entries: liveEntries,
           pendingBatches: meta.pendingBatches || 0,
           reports: meta.reports || 0,
+          iqDepth: meta.iqDepth || 0,   // search-index op queue depth (keys, ~150 ops each); drains to 0 as fold/rebuild ops apply
           lastFlush: meta.lastFlush || null,
           lastAdded: meta.lastAdded || 0,
           lastRemoved: meta.lastRemoved || 0,
@@ -617,7 +618,7 @@ export default {
           shardScheme: "filehex3-full",
           shardCount: 4096,
           foldVer: meta.foldVer || 0,   // fancy-Unicode fold re-index version (FOLD_VER when the one-time lap is done)
-          version: 18,   // small-caps added to the Unicode fold (index + query), FOLD_VER 2 re-index
+          version: 19,   // + iqDepth (index-op queue depth) on /health, stamped from the flush drain (no extra list op)
         });
       }
 
@@ -1051,6 +1052,11 @@ async function listPrefix(env, prefix, cap = 5000) {
 
 async function flushR2(env) {
   const prevMeta = JSON.parse((await env.AVATAR_KV.get("meta")) || "{}");
+  // iq: index-op queue depth (in KEYS, each ≈ up to MAX_INDEX_OPS_PER_FLUSH ops), stamped from the
+  // drain below so /health can surface it WITHOUT its own list op (that endpoint is polled every 15s
+  // and must stay list-free). Carried forward on a failed flush (drain skipped). Saturates at the
+  // listPrefix cap (1000 keys); at ~150 ops/key that's ~150k queued ops before it stops being exact.
+  let iqDepthNow = prevMeta.iqDepth || 0;
   const pendNames = await listPrefix(env, "pend:");
   const repNames  = await listPrefix(env, "rep:");
   const admuNames = await listPrefix(env, "admu:");
@@ -1280,6 +1286,7 @@ async function flushR2(env) {
   // index exactly what persisted; a failed apply re-queues everything and re-applies idempotently).
   if (allShardsOk) {
     const iqNames = await listPrefix(env, "iq:", 1000);   // own cursor (never crowded out); we drain only a few
+    iqDepthNow = iqNames.length;   // queue depth at flush start (keys) → meta.iqDepth for /health, ticks to 0
     let queued = []; const drained = [];
     for (const kn of iqNames) {
       if (queued.length >= MAX_INDEX_OPS_PER_FLUSH) break;
@@ -1400,6 +1407,7 @@ async function flushR2(env) {
       : `R2 partial: some shard IO failed, kept pending (+${added} -${removed})`,
     pendingBatches: pendNames.length,
     reports: allShardsOk ? Math.max(0, repNames.length - repClear.length) : repNames.length,
+    iqDepth: iqDepthNow,   // search-index op queue depth (keys) — watch it drain to 0 after a fold/rebuild
     backend: "r2",
   }));
 
