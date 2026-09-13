@@ -202,7 +202,15 @@ const MAX_INDEX_OPS_PER_FLUSH = 150;
 // with the grouped index work (≤150 ops), prune (40 reads), reconcile (8) and rename (8) in the same
 // cron chain the worst case is ~700 subrequests, still comfortably under the ~1000/invocation budget.
 // Admin/bot pushes are separately bounded (WALK_BATCH).
-const MAX_SHARDS_PER_FLUSH = 180;
+// LOWERED 180 -> 60: at 180 the flush was measured taking >60s (GET /flush timed out) under a heavy
+// harvest backlog — each dirty shard is a PUT + a CDN purge (~100-300ms HTTP call), so 180 dirty shards
+// alone is tens of seconds of WALL time (the ~1000 subrequest COUNT budget was fine; wall time was not).
+// A flush that overruns the invocation is KILLED before the cron's later tasks run, so reconcileIndex
+// (the fold re-index) NEVER executed and the iq: queue never drained — the whole pipeline jammed behind
+// one overloaded flush. 60 shards keeps each flush well within budget so it COMPLETES and the downstream
+// reconcile/drain actually run. Contribution intake is slower, which is fine (and desirable) while the
+// passive-harvest inflow is the thing overloading the pipeline.
+const MAX_SHARDS_PER_FLUSH = 60;
 // Coalesce _manifest.json writes. The LIVE entry count already rides `meta.entries` (which /health
 // max()es against the manifest), so the _manifest.json copy only needs periodic freshening, not a
 // write+purge on every count-moving flush during steady growth. Rewrite it at most every N ms OR once
@@ -627,7 +635,7 @@ export default {
           shardScheme: "filehex3-full",
           shardCount: 4096,
           foldVer: meta.foldVer || 0,   // fancy-Unicode fold re-index version (FOLD_VER when the one-time lap is done)
-          version: 20,   // tokenizeFields emits raw ∪ folded (consistent token set); FOLD_VER 3 re-index
+          version: 21,   // flush overrun fix: MAX_SHARDS_PER_FLUSH 180->60 + reconcile runs before flush
         });
       }
 
@@ -655,13 +663,16 @@ export default {
     // re-indexes any entry MISSING from the search index (fragments/avtr/index), healing avatars
     // that were cloneable-but-unsearchable because their index op was dropped in the past. No GitHub.
     // Each task is independent + isolated: one throwing (e.g. a recount KV hiccup) must NOT skip the
-    // others (the worklist prune was intermittently skipped when it ran AFTER a slow/erroring recount).
-    // flushR2 first (drains queues + maintains fillHint), then the cheap prune, then the heavier recount.
+    // others. ORDER MATTERS FOR STARVATION: the CHEAP, critical tasks run FIRST so an overloaded flush
+    // (measured >60s under a harvest backlog) can't consume the whole invocation and skip them — which
+    // is exactly why the fold re-index (reconcileIndex) stopped running and the iq: queue jammed. So:
+    // reconcile (re-arm + advance the fold lap, enqueues iq: ops) → prune → author-rename, THEN flushR2
+    // LAST (now bounded to 60 shards so it completes and drains the iq: ops the earlier tasks queued).
     ctx.waitUntil((async () => {
-      try { await flushR2(env); } catch (e) { console.log("flushR2 err", e); }
-      try { await pruneFillWorklist(env); } catch (e) { console.log("prune err", e); }
       try { await reconcileIndex(env); } catch (e) { console.log("reconcile err", e); }
+      try { await pruneFillWorklist(env); } catch (e) { console.log("prune err", e); }
       try { await propagateAuthorRenames(env); } catch (e) { console.log("arn err", e); }
+      try { await flushR2(env); } catch (e) { console.log("flushR2 err", e); }
     })());
   },
 };
